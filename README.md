@@ -40,7 +40,10 @@ Existing load-test tools either need a CLI/yaml workflow (`k6`, `gatling`) or a 
 
 | Live test | Report (HTML) | History |
 |---|---|---|
-| ![live](docs/screenshots/live.png) | ![report](docs/screenshots/report.png) | ![history](docs/screenshots/history.png) |
+| ![live](<img width="1919" height="931" alt="image" src="https://github.com/user-attachments/assets/cdb25334-a090-46d1-9b05-b12154aeb270" />
+) | ![report](<img width="1919" height="931" alt="image" src="https://github.com/user-attachments/assets/1c6491e2-693b-4c76-a1bb-2eeabe36e3bd" />
+) | ![history](<img width="1919" height="931" alt="image" src="https://github.com/user-attachments/assets/69c2edb0-4e71-4b8f-837c-d0fe8f5ded09" />
+) |
 
 ---
 
