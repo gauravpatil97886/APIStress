@@ -1,0 +1,43 @@
+# --- Local env / secrets ---
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# --- Go ---
+backend/bin/
+bin/
+*.test
+*.prof
+coverage.out
+go.work
+go.work.sum
+
+# --- Node / Vite ---
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/.eslintcache
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Logs ---
+backend/logs/*.log
+backend/logs/*.gz
+logs/
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# --- Docker ---
+docker-data/
+
+# --- Generated reports ---
+*.pdf
+!docs/**/*.pdf

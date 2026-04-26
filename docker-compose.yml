@@ -1,0 +1,45 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: choicehammer
+      POSTGRES_PASSWORD: choicehammer
+      POSTGRES_DB: choicehammer
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U choicehammer"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      CH_HTTP_ADDR: ":8080"
+      CH_POSTGRES_DSN: "postgres://choicehammer:choicehammer@postgres:5432/choicehammer?sslmode=disable"
+      CH_ACCESS_KEY: "${CH_ACCESS_KEY:-choicehammer-dev-key}"
+      CH_LOG_DIR: "/app/logs"
+      CH_LOG_LEVEL: "info"
+      CH_LOG_PRETTY: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./backend/logs:/app/logs
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    environment:
+      VITE_API_URL: "http://localhost:8080"
+    ports:
+      - "5173:80"
+
+volumes:
+  pgdata:
