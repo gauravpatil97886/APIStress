@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import toast from "react-hot-toast";
 import { ArrowRight, KeyRound } from "lucide-react";
 import { Logo } from "../components/ui/Logo";
+import { CreatedBy } from "../components/ui/CreatedBy";
 import { api, setKey } from "../lib/api";
 
 export default function Login() {
@@ -77,9 +78,12 @@ export default function Login() {
             </button>
           </form>
         </div>
-        <p className="mt-6 text-center text-xs text-ink-dim">
-          Open-source load testing — self-hosted
-        </p>
+        <div className="mt-6 flex flex-col items-center gap-3">
+          <p className="text-xs text-ink-dim">
+            Open-source load testing — self-hosted
+          </p>
+          <CreatedBy />
+        </div>
       </motion.div>
     </div>
   );

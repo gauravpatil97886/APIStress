@@ -9,6 +9,7 @@ import toast from "react-hot-toast";
 import { Wordmark } from "./Logo";
 import { clearKey } from "../../lib/api";
 import { RunNotifier } from "./RunNotifier";
+import { CreatedBy } from "./CreatedBy";
 
 const items = [
   { to: "/",         label: "Dashboard",  Icon: LayoutDashboard },
@@ -69,12 +70,13 @@ export default function AppShell() {
           </NavLink>
         ))}
       </nav>
-      <div className="mt-auto">
+      <div className="mt-auto space-y-2">
         <button onClick={logout} className="btn-ghost w-full justify-start text-ink-muted hover:text-bad">
           <LogOut className="w-4 h-4" />Sign out
         </button>
-        <div className="mt-3 text-[10px] text-ink-dim text-center">
-          APIStress · open-source
+        <CreatedBy compact />
+        <div className="text-[9px] text-ink-dim text-center tracking-wider uppercase">
+          APIStress · v1.0 · open-source
         </div>
       </div>
     </aside>
