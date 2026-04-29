@@ -2,6 +2,7 @@ package api
 
 import (
 	"github.com/choicetechlab/choicehammer/internal/api/handlers"
+	pwh "github.com/choicetechlab/choicehammer/internal/api/handlers/postwomen"
 	"github.com/choicetechlab/choicehammer/internal/api/middleware"
 	"github.com/choicetechlab/choicehammer/internal/config"
 	"github.com/choicetechlab/choicehammer/internal/engine"
@@ -48,6 +49,23 @@ func New(cfg *config.Config, db *pgxpool.Pool, mgr *engine.Manager) *gin.Engine 
 
 	cmp := &handlers.CompareHandler{DB: db}
 	protected.GET("/compare", cmp.Compare)
+
+	// PostWomen — companion API testing module.
+	pw := &pwh.Handler{DB: db}
+	protected.GET("/postwomen/workspaces",        pw.ListWorkspaces)
+	protected.POST("/postwomen/workspaces",       pw.CreateWorkspace)
+	protected.DELETE("/postwomen/workspaces/:id", pw.DeleteWorkspace)
+	protected.GET("/postwomen/workspaces/:id/tree", pw.Tree)
+	protected.POST("/postwomen/collections",        pw.CreateCollection)
+	protected.PATCH("/postwomen/collections/:id",   pw.RenameCollection)
+	protected.DELETE("/postwomen/collections/:id",  pw.DeleteCollection)
+	protected.POST("/postwomen/requests",      pw.CreateRequest)
+	protected.PUT("/postwomen/requests/:id",   pw.UpdateRequest)
+	protected.DELETE("/postwomen/requests/:id",pw.DeleteRequest)
+	protected.POST("/postwomen/send",          pw.Send)
+	protected.POST("/postwomen/import",        pw.Import)
+	protected.GET("/postwomen/export/:id",     pw.Export)
+	protected.GET("/postwomen/history",        pw.History)
 
 	cost := &handlers.CostHandler{}
 	protected.GET("/cost/pricing", cost.Pricing)

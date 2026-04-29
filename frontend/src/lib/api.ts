@@ -61,4 +61,35 @@ export const api = {
   liveURL: (id: string) => `${BASE}/api/runs/${id}/live?key=${encodeURIComponent(getKey())}`,
   compare: (a: string, b: string) => req<any>(`/api/compare?a=${a}&b=${b}`),
   costPricing: () => req<any>(`/api/cost/pricing`),
+
+  // ─── PostWomen ───────────────────────────────────────────────────────
+  pwListWorkspaces: () => req<any[]>(`/api/postwomen/workspaces`),
+  pwCreateWorkspace: (name: string) =>
+    req<{ id: string }>(`/api/postwomen/workspaces`, { method: "POST", body: JSON.stringify({ name }) }),
+  pwDeleteWorkspace: (id: string) =>
+    req<void>(`/api/postwomen/workspaces/${id}`, { method: "DELETE" }),
+  pwTree: (workspaceID: string) =>
+    req<{ collections: any[]; requests: any[] }>(`/api/postwomen/workspaces/${workspaceID}/tree`),
+  pwCreateCollection: (b: any) =>
+    req<{ id: string }>(`/api/postwomen/collections`, { method: "POST", body: JSON.stringify(b) }),
+  pwRenameCollection: (id: string, name: string) =>
+    req<void>(`/api/postwomen/collections/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  pwDeleteCollection: (id: string) =>
+    req<void>(`/api/postwomen/collections/${id}`, { method: "DELETE" }),
+  pwCreateRequest: (b: any) =>
+    req<{ id: string }>(`/api/postwomen/requests`, { method: "POST", body: JSON.stringify(b) }),
+  pwUpdateRequest: (id: string, b: any) =>
+    req<void>(`/api/postwomen/requests/${id}`, { method: "PUT", body: JSON.stringify(b) }),
+  pwDeleteRequest: (id: string) =>
+    req<void>(`/api/postwomen/requests/${id}`, { method: "DELETE" }),
+  pwSend: (request: any, vars: Record<string, string> = {}) =>
+    req<any>(`/api/postwomen/send`, { method: "POST", body: JSON.stringify({ request, vars }) }),
+  pwImport: (workspaceID: string, body: string) =>
+    req<{ collection_id: string; counts: any }>(`/api/postwomen/import?workspace_id=${workspaceID}`, {
+      method: "POST",
+      body,
+    }),
+  pwExportURL: (collectionID: string) =>
+    `${BASE}/api/postwomen/export/${collectionID}?key=${encodeURIComponent(getKey())}`,
+  pwHistory: () => req<any[]>(`/api/postwomen/history`),
 };

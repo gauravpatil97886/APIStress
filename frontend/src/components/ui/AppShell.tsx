@@ -3,7 +3,7 @@ import { NavLink, useLocation, useNavigate, Outlet } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard, FlaskConical, Activity, FileText, LogOut, Server, Plus,
-  History as HistoryIcon, Menu, X, BookOpen,
+  History as HistoryIcon, Menu, X, BookOpen, Send, Home,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { Wordmark } from "./Logo";
@@ -44,6 +44,21 @@ export default function AppShell() {
           <X className="w-4 h-4" />
         </button>
       </div>
+
+      {/* Back to mode picker */}
+      <NavLink
+        to="/mode"
+        className="mt-3 group flex items-center gap-3 px-3 py-2 rounded-xl text-sm
+                   bg-gradient-to-r from-brand/10 to-transparent ring-1 ring-brand/30
+                   text-ink hover:from-brand/20 hover:ring-brand/50 transition"
+        title="Back to home — pick another tool"
+      >
+        <Home className="w-4 h-4 text-brand" />
+        <span className="font-semibold">Home</span>
+        <span className="ml-auto text-[9px] uppercase tracking-wider text-ink-muted group-hover:text-brand">
+          switch tool
+        </span>
+      </NavLink>
       <nav className="mt-6 flex flex-col gap-1">
         {items.map(({ to, label, Icon }) => (
           <NavLink
@@ -72,6 +87,13 @@ export default function AppShell() {
         ))}
       </nav>
       <div className="mt-auto space-y-2">
+        <NavLink
+          to="/postwomen"
+          className="btn-ghost w-full justify-start text-ink-muted hover:text-sky-400"
+          title="Switch to PostWomen — API client"
+        >
+          <Send className="w-4 h-4" />Switch to PostWomen
+        </NavLink>
         <button onClick={logout} className="btn-ghost w-full justify-start text-ink-muted hover:text-bad">
           <LogOut className="w-4 h-4" />Sign out
         </button>

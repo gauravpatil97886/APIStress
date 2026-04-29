@@ -12,6 +12,8 @@ import ReportDetail from "./pages/ReportDetail";
 import History from "./pages/History";
 import Compare from "./pages/Compare";
 import Overview from "./pages/Overview";
+import ModePicker from "./pages/ModePicker";
+import PostWomen from "./pages/postwomen/PostWomen";
 import SavedTests from "./pages/SavedTests";
 import Environments from "./pages/Environments";
 
@@ -23,6 +25,11 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      {/* Mode picker — full-screen, no AppShell */}
+      <Route path="/mode" element={<Protected><ModePicker /></Protected>} />
+      {/* PostWomen — its own full-screen 3-pane shell, no AppShell */}
+      <Route path="/postwomen" element={<Protected><PostWomen /></Protected>} />
+
       <Route element={<Protected><AppShell /></Protected>}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/builder" element={<TestBuilder />} />

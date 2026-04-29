@@ -6,6 +6,7 @@ import { ArrowRight, KeyRound } from "lucide-react";
 import { Logo } from "../components/ui/Logo";
 import { CreatedBy } from "../components/ui/CreatedBy";
 import { api, setKey } from "../lib/api";
+import { MODE_KEY } from "./ModePicker";
 
 export default function Login() {
   const [key, setKeyVal] = useState("");
@@ -23,7 +24,10 @@ export default function Login() {
       await api.login(key.trim());
       setKey(key.trim());
       toast.success("Welcome to ChoiceHammer");
-      nav("/", { replace: true });
+      // Route to last-used mode if known, otherwise show the chooser.
+      const last = localStorage.getItem(MODE_KEY);
+      const dest = last === "postwomen" ? "/postwomen" : last === "apistress" ? "/" : "/mode";
+      nav(dest, { replace: true });
     } catch (err: any) {
       toast.error(err.message || "Login failed");
     } finally {

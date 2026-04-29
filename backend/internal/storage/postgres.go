@@ -14,6 +14,9 @@ import (
 //go:embed migrations/001_init.sql
 var initSQL string
 
+//go:embed migrations/002_postwomen.sql
+var postwomenSQL string
+
 type DB struct {
 	Pool *pgxpool.Pool
 }
@@ -46,8 +49,13 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 
 	if _, err := pool.Exec(ctx, initSQL); err != nil {
 		pool.Close()
-		logger.Error("migration failed", zap.Error(err))
-		return nil, fmt.Errorf("migrate: %w", err)
+		logger.Error("migration 001 failed", zap.Error(err))
+		return nil, fmt.Errorf("migrate 001: %w", err)
+	}
+	if _, err := pool.Exec(ctx, postwomenSQL); err != nil {
+		pool.Close()
+		logger.Error("migration 002 failed", zap.Error(err))
+		return nil, fmt.Errorf("migrate 002: %w", err)
 	}
 	logger.Info("postgres migrations applied")
 

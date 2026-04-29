@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, RefObject } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import toast from "react-hot-toast";
@@ -44,6 +44,8 @@ export default function TestBuilder() {
   const [envTag, setEnvTag] = useState<string>("");
   const [costInputs, setCostInputs] = useState<CostInputs>({});
   const [busy, setBusy] = useState(false);
+  const [importFlash, setImportFlash] = useState(false);
+  const requestSectionRef: RefObject<HTMLElement> = useRef(null);
 
   useEffect(() => { if (createdBy) setUser(createdBy); }, [createdBy]);
 
@@ -103,6 +105,13 @@ export default function TestBuilder() {
         `Imported · ${p.method} · ${headerCount} header${headerCount === 1 ? "" : "s"}` +
         (bytes ? ` · ${bytes} B body` : "")
       );
+
+      // Auto-scroll into the Request section + briefly flash a highlight ring.
+      setTimeout(() => {
+        requestSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+        setImportFlash(true);
+        setTimeout(() => setImportFlash(false), 1600);
+      }, 80);
     } catch (err: any) {
       toast.error(err.message || "Couldn't parse that curl command");
     }
@@ -234,7 +243,11 @@ export default function TestBuilder() {
             </div>
           </section>
 
-          <section className="card p-5 space-y-4">
+          <section
+            ref={requestSectionRef}
+            className={`card p-5 space-y-4 scroll-mt-24 transition-shadow duration-700
+              ${importFlash ? "ring-2 ring-brand/60 shadow-2xl shadow-brand/30" : "ring-0"}`}
+          >
             <h2 className="text-sm font-semibold">Request</h2>
             <div>
               <div className="flex items-end justify-between gap-2 mb-1.5">
