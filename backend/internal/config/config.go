@@ -16,6 +16,15 @@ type Config struct {
 	LogLevel      string
 	LogPretty     bool
 	AdminKey      string
+
+	// Jira integration — used by the "Attach report to Jira" feature.
+	// All fields blank = feature disabled, /api/jira/health returns
+	// {configured: false}, the UI hides its "Attach to Jira" button.
+	JiraBaseURL    string // e.g. https://choicetechlab.atlassian.net
+	JiraAuthKind   string // "cloud_basic" (email + API token) | "server_pat" (Bearer PAT)
+	JiraEmail      string // only for cloud_basic
+	JiraAPIToken   string // API token (cloud) or PAT (server)
+	JiraProjectKey string // optional — restrict attaches to this project (e.g. "CT")
 }
 
 func Load() (*Config, error) {
@@ -29,6 +38,12 @@ func Load() (*Config, error) {
 		LogLevel:      env("CH_LOG_LEVEL", "info"),
 		LogPretty:     env("CH_LOG_PRETTY", "true") == "true",
 		AdminKey:      env("CH_ADMIN_KEY", "97886"),
+
+		JiraBaseURL:    env("CH_JIRA_BASE_URL", ""),
+		JiraAuthKind:   env("CH_JIRA_AUTH_KIND", "cloud_basic"),
+		JiraEmail:      env("CH_JIRA_EMAIL", ""),
+		JiraAPIToken:   env("CH_JIRA_API_TOKEN", ""),
+		JiraProjectKey: env("CH_JIRA_PROJECT_KEY", ""),
 	}
 	if cfg.AccessKey == "" {
 		return nil, fmt.Errorf("CH_ACCESS_KEY must be set")

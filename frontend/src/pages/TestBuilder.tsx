@@ -3,11 +3,12 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import toast from "react-hot-toast";
 import {
-  ChevronRight, Clipboard, Hammer, Save, Sparkles,
+  ChevronRight, Clipboard, Hammer, Save, Sparkles, Send,
 } from "lucide-react";
 import { api, getUser, setUser } from "../lib/api";
 import { ENV_TAGS, ENV_LABEL } from "../components/ui/EnvPill";
 import { CostInputsPanel, type CostInputs } from "../components/builder/CostInputs";
+import { JiraSection } from "../components/builder/JiraSection";
 import { parseCurl, prettyJSON, headersToText, suggestName } from "../lib/curl";
 
 const PATTERNS = [
@@ -43,6 +44,57 @@ export default function TestBuilder() {
   const [notes, setNotes] = useState("");
   const [envTag, setEnvTag] = useState<string>("");
   const [costInputs, setCostInputs] = useState<CostInputs>({});
+  // When true, the backend auto-attaches the PDF to the Jira ticket once
+  // the run finishes. Persisted to localStorage so the user's preference
+  // sticks across sessions.
+  // Auto-attach is *opt-in per session* — defaults to OFF every time the
+  // user opens the test builder, even if they ticked it for a previous run.
+  // Posting a load report to Jira is a meaningful side-effect, so we want
+  // an explicit choice each time rather than a sticky preference.
+  const [autoAttachJira, setAutoAttachJira] = useState<boolean>(false);
+  // Clear any previous sticky preference once, so users coming back after
+  // an upgrade don't carry stale "on" state.
+  useEffect(() => { localStorage.removeItem("ch_auto_attach_jira"); }, []);
+  // Comment template selection — persisted so the user's last choice sticks.
+  const [jiraCommentTemplate, setJiraCommentTemplate] = useState<"detailed" | "brief" | "critical">(
+    () => (localStorage.getItem("ch_jira_template") as any) || "detailed"
+  );
+  useEffect(() => {
+    localStorage.setItem("ch_jira_template", jiraCommentTemplate);
+  }, [jiraCommentTemplate]);
+
+  // Friendlier setter: lets the user paste a full Jira URL and we'll extract
+  // the issue key. Saves the "Tip: paste …/browse/CT-1234" promise from the
+  // section we wrote.
+  function setJiraIDSmart(raw: string) {
+    const v = raw.trim();
+    const urlMatch = v.match(/\/browse\/([A-Z][A-Z0-9_]+-\d+)/i);
+    if (urlMatch) {
+      setJiraID(urlMatch[1].toUpperCase());
+      // Auto-fill the link too if user pasted a URL.
+      if (!jiraLink.trim()) setJiraLink(v);
+      return;
+    }
+    setJiraID(v.toUpperCase());
+  }
+  // Track the full health response so we can tell the user *why* the
+  // integration is unavailable (not configured vs. configured-but-probe-
+  // failed vs. just stale cache from before the backend restart).
+  const [jiraHealth, setJiraHealth] = useState<{
+    configured: boolean; ok?: boolean; error?: string; account?: string;
+  } | null>(null);
+  const jiraConfigured = !!jiraHealth?.configured && !!jiraHealth?.ok;
+  function refreshJiraHealth() {
+    api.jiraHealth().then(setJiraHealth).catch(() => setJiraHealth({ configured: false }));
+  }
+  useEffect(() => {
+    refreshJiraHealth();
+    // Re-probe when the tab regains focus — fixes "I restarted the backend
+    // and the UI still says not configured" without a hard refresh.
+    const onFocus = () => refreshJiraHealth();
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
   const [busy, setBusy] = useState(false);
   const [importFlash, setImportFlash] = useState(false);
   const requestSectionRef: RefObject<HTMLElement> = useRef(null);
@@ -175,6 +227,8 @@ export default function TestBuilder() {
         notes: notes.trim(),
         env_tag: envTag,
         cost_inputs: costInputs.cloud ? costInputs : undefined,
+        auto_attach_jira: autoAttachJira && jiraConfigured && !!jiraID.trim(),
+        jira_comment_template: jiraCommentTemplate,
       };
       const { run_id } = await api.startRun(payload);
       toast.success("Load test started");
@@ -398,14 +452,6 @@ export default function TestBuilder() {
               <input className="input w-full" value={createdBy} onChange={(e) => setCreatedBy(e.target.value)} placeholder="e.g. Aisha Khan" />
             </div>
             <div>
-              <label className="label">Jira ticket ID <span className="text-bad">*</span></label>
-              <input className="input w-full font-mono" value={jiraID} onChange={(e) => setJiraID(e.target.value)} placeholder="CT-1234" />
-            </div>
-            <div>
-              <label className="label">Jira link <span className="text-ink-dim normal-case font-normal">(optional)</span></label>
-              <input className="input w-full font-mono text-xs" value={jiraLink} onChange={(e) => setJiraLink(e.target.value)} placeholder="https://your-org.atlassian.net/browse/CT-1234" />
-            </div>
-            <div>
               <label className="label">Environment <span className="text-bad">*</span></label>
               <div className="flex flex-col gap-2">
                 {ENV_TAGS.map((t) => {
@@ -462,6 +508,21 @@ export default function TestBuilder() {
           </section>
         </aside>
       </div>
+
+      {/* Jira integration — full-width row, much more breathing room than
+          the cramped right sidebar. */}
+      <JiraSection
+        jiraID={jiraID}
+        setJiraID={setJiraIDSmart}
+        jiraLink={jiraLink}
+        setJiraLink={setJiraLink}
+        autoAttach={autoAttachJira}
+        setAutoAttach={setAutoAttachJira}
+        commentTemplate={jiraCommentTemplate}
+        setCommentTemplate={setJiraCommentTemplate}
+        health={jiraHealth}
+        onRefreshHealth={refreshJiraHealth}
+      />
 
       {/* Cost estimate spans full width below — needs the room */}
       <CostInputsPanel value={costInputs} onChange={setCostInputs} />

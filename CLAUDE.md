@@ -1,15 +1,25 @@
 # Choice Techlab Toolkit
 
-> Internal multi-tool platform: **APIStress** (load testing) + **PostWomen** (Postman-style API client) behind a shared team-scoped auth/admin layer.
+> Internal multi-tool platform: **APIStress** (load testing) + **PostWomen** (API client) + **Crosswalk** (Excel data joiner) behind a shared team-scoped auth/admin layer with Jira integration and a cross-tool activity feed.
 
 Go (Gin) backend, React 18 frontend, PostgreSQL for storage, optional `hammer` CLI.
+
+## Tools
+
+| Slug | Name | What it does |
+|---|---|---|
+| `apistress` | APIStress | Load testing — VUs, ramp/spike/stages, HDR-histogram metrics, PDF reports, run comparison |
+| `postwomen` | PostWomen | Postman-style API client — collections, environments, curl import/export, **Runner** (data-driven CSV/XLSX iteration with macros) |
+| `crosswalk` | Crosswalk | Excel-themed VLOOKUP / data-join tool — streams ~10 GB CSV via Web Worker, virtualised result grid, CSV / XLSX export |
+
+Adding a new tool requires editing **one frontend entry** (`frontend/src/tools/registry.tsx`) and **one backend slug** (`backend/internal/tools/registry.go`); everything else (routes, sidebar, mode picker, admin tool toggles, default landing) iterates the registry.
 
 ## Repo layout
 
 ```
 choicehammer/
-├── backend/          # Go service (engine + API + CLI + admin + teams)
-├── frontend/         # React 18 + Vite + Tailwind — APIStress + PostWomen + Admin
+├── backend/          # Go service (engine + API + CLI + admin + teams + activity + jira)
+├── frontend/         # React 18 + Vite + Tailwind — APIStress + PostWomen + Crosswalk + Admin
 ├── docker-compose.yml
 ├── Makefile
 ├── .env              # local dev env (dummy creds, safe to commit *for this internal tool*)

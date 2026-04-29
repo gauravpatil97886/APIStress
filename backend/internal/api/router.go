@@ -8,12 +8,13 @@ import (
 	"github.com/choicetechlab/choicehammer/internal/api/middleware"
 	"github.com/choicetechlab/choicehammer/internal/config"
 	"github.com/choicetechlab/choicehammer/internal/engine"
+	"github.com/choicetechlab/choicehammer/internal/jira"
 	"github.com/choicetechlab/choicehammer/internal/teams"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func New(cfg *config.Config, db *pgxpool.Pool, mgr *engine.Manager, teamSvc *teams.Service, actSvc *activity.Service) *gin.Engine {
+func New(cfg *config.Config, db *pgxpool.Pool, mgr *engine.Manager, teamSvc *teams.Service, actSvc *activity.Service, jiraClient *jira.Client) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(middleware.RequestLogger())
@@ -39,6 +40,12 @@ func New(cfg *config.Config, db *pgxpool.Pool, mgr *engine.Manager, teamSvc *tea
 	adminGrp.GET("/audit",             ah.AuditFeed)
 	adminGrp.GET("/activity",          adminAct.Feed)
 	adminGrp.GET("/activity/stats",    adminAct.Stats)
+	// Same Jira health probe the user-side endpoint exposes — admins use it
+	// from the Jira tab to verify the integration is up without needing an
+	// access key.
+	adminGrp.GET("/jira/health", func(c *gin.Context) {
+		(&handlers.JiraHandler{Client: jiraClient}).Health(c)
+	})
 
 	protected := r.Group("/api", middleware.TeamAuth(teamSvc))
 	protected.GET("/auth/verify", auth.Verify)
@@ -71,6 +78,14 @@ func New(cfg *config.Config, db *pgxpool.Pool, mgr *engine.Manager, teamSvc *tea
 	protected.GET("/reports/:id", reports.JSON)
 	protected.GET("/reports/:id/html", reports.HTML)
 	protected.GET("/reports/:id/pdf", reports.PDF)
+
+	// Jira integration — health probe + attach-run-to-issue. The handler
+	// gracefully refuses if the env-driven client is nil.
+	jiraH := &handlers.JiraHandler{DB: db, Client: jiraClient, Activity: actSvc}
+	protected.GET("/jira/health", jiraH.Health)
+	protected.GET("/jira/issue/:key", jiraH.LookupIssue)
+	protected.POST("/runs/:id/attach-jira", jiraH.AttachRun)
+	protected.GET("/runs/:id/jira-attachments", jiraH.ListAttachments)
 
 	cmp := &handlers.CompareHandler{DB: db}
 	protected.GET("/compare", cmp.Compare)

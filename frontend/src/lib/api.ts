@@ -78,6 +78,34 @@ export const api = {
   deleteEnv: (id: string) => req<void>(`/api/environments/${id}`, { method: "DELETE" }),
 
   liveURL: (id: string) => `${BASE}/api/runs/${id}/live?key=${encodeURIComponent(getKey())}`,
+
+  // Jira integration — health probe + one-shot attach-run-to-issue.
+  jiraHealth: () => req<{
+    configured: boolean; ok?: boolean; base_url?: string; auth_kind?: string;
+    project?: string; account?: string; error?: string;
+  }>("/api/jira/health"),
+  jiraAttachRun: (runID: string, body: { jira_id?: string; comment?: string } = {}) =>
+    req<{ ok: boolean; jira_id: string; jira_url: string; filename: string }>(
+      `/api/runs/${runID}/attach-jira`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  jiraAttachments: (runID: string) =>
+    req<Array<{
+      id: number; jira_id: string; jira_url: string; filename: string;
+      bytes: number; attached_by: string; attached_at: string;
+    }>>(`/api/runs/${runID}/jira-attachments`),
+  jiraLookupIssue: (key: string) => req<{
+    key: string;
+    summary: string;
+    status?: string;
+    issue_type?: string;
+    priority?: string;
+    url?: string;
+    assignee_name?: string;
+    assignee_email?: string;
+    assignee_avatar?: string;
+  }>(`/api/jira/issue/${encodeURIComponent(key)}`),
+
   compare: (a: string, b: string) => req<any>(`/api/compare?a=${a}&b=${b}`),
   costPricing: () => req<any>(`/api/cost/pricing`),
 
@@ -196,4 +224,8 @@ export const adminApi = {
   },
   activityStats: (hours = 168) =>
     adminReq<any>(`/api/admin/activity/stats?hours=${hours}`),
+  jiraHealth: () => adminReq<{
+    configured: boolean; ok?: boolean; account?: string; base_url?: string;
+    auth_kind?: string; project?: string; error?: string;
+  }>("/api/admin/jira/health"),
 };

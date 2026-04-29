@@ -4,7 +4,8 @@ import { motion } from "framer-motion";
 import {
   Shield, Plus, Copy, Trash2, KeyRound, Users, RefreshCw, ArrowLeft,
   Sparkles, Check, X, Edit3, Power, Activity as ActivityIcon, History as HistoryIcon,
-  Search, Filter, TrendingUp, BarChart3, Eye,
+  Search, Filter, TrendingUp, BarChart3, Eye, AlertCircle, Paperclip, ShieldCheck,
+  ExternalLink, FileDown,
 } from "lucide-react";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip,
@@ -135,7 +136,7 @@ function AdminConsole({ onLogout }: { onLogout: () => void }) {
   const [revealed, setRevealed] = useState<{ teamID: string; key: string } | null>(null);
   const [editing, setEditing] = useState<Team | null>(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState<"teams" | "activity" | "audit">("teams");
+  const [tab, setTab] = useState<"teams" | "activity" | "jira" | "audit">("teams");
 
   async function toggleActive(t: Team) {
     try {
@@ -201,6 +202,7 @@ function AdminConsole({ onLogout }: { onLogout: () => void }) {
           {[
             { id: "teams" as const,    label: "Teams",    Icon: Users },
             { id: "activity" as const, label: "Activity", Icon: ActivityIcon },
+            { id: "jira" as const,     label: "Jira",     Icon: Paperclip },
             { id: "audit" as const,    label: "Audit",    Icon: HistoryIcon },
           ].map(t => (
             <button
@@ -218,6 +220,7 @@ function AdminConsole({ onLogout }: { onLogout: () => void }) {
         </nav>
 
         {tab === "activity" && <ActivityTab teams={teams} />}
+        {tab === "jira" && <JiraTab />}
         {tab === "audit" && <AuditTab />}
 
         {tab === "teams" && (<>
@@ -632,6 +635,13 @@ function ActivityTab({ teams }: { teams: Team[] }) {
   const [filterEvent, setFilterEvent] = useState("");
   const [search, setSearch] = useState("");
   const [inspect, setInspect] = useState<any | null>(null);
+  // Recent Jira-attach failures — surfaced as a dedicated panel above the
+  // activity feed so admins notice broken integrations fast.
+  const [jiraErrors, setJiraErrors] = useState<any[]>([]);
+  useEffect(() => {
+    adminApi.activity({ event: "feature.jira.error", limit: 10 })
+      .then(setJiraErrors).catch(() => setJiraErrors([]));
+  }, [items]); // refresh whenever the main feed reloads
 
   async function load() {
     try {
@@ -700,6 +710,49 @@ function ActivityTab({ teams }: { teams: Team[] }) {
           </select>
         </div>
       </div>
+
+      {/* Jira errors panel — surfaces auto-attach failures so admins
+          notice broken Jira integrations without trawling the feed. */}
+      {jiraErrors.length > 0 && (
+        <div className="card p-4 ring-2 ring-bad/30 bg-bad/[.04]">
+          <div className="flex items-center gap-2 mb-3">
+            <AlertCircle className="w-4 h-4 text-bad" />
+            <div className="text-sm font-bold text-bad">Jira integration errors</div>
+            <span className="pill ring-1 text-[10px] bg-bad/15 text-bad ring-bad/30 ml-1">
+              {jiraErrors.length} recent
+            </span>
+            <span className="text-[11px] text-ink-muted ml-auto">
+              Auto-attach failures from finished runs. Fix the underlying issue, then operators can manually retry from the report page.
+            </span>
+          </div>
+          <ul className="space-y-1.5">
+            {jiraErrors.slice(0, 6).map((e: any) => (
+              <li key={e.id} className="text-xs flex items-start gap-2 p-2 rounded ring-1 ring-bad/20 bg-bg-card/40">
+                <span className="text-bad shrink-0 font-mono text-[10px] mt-0.5">
+                  {new Date(e.ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                </span>
+                <span className="pill ring-1 text-[10px] bg-bg-card ring-bg-border text-ink-muted shrink-0 font-mono">
+                  {e.team_name || "—"}
+                </span>
+                {e.meta?.jira_id && (
+                  <span className="pill ring-1 text-[10px] bg-brand/15 text-brand ring-brand/30 shrink-0 font-mono">
+                    {e.meta.jira_id}
+                  </span>
+                )}
+                <span className="pill ring-1 text-[10px] bg-warn/15 text-warn ring-warn/30 shrink-0 font-mono uppercase tracking-wider">
+                  {e.meta?.reason || "error"}
+                </span>
+                <span className="text-bad font-mono text-[11px] flex-1 break-all" title={e.meta?.error}>
+                  {e.meta?.error}
+                </span>
+                <button onClick={() => setInspect(e)} className="btn-ghost text-[10px] py-0.5 px-1.5 shrink-0" title="Inspect">
+                  <Eye className="w-3 h-3" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {/* Charts */}
       <div className="grid lg:grid-cols-2 gap-4">
@@ -1009,5 +1062,322 @@ function AuditTab() {
         ))}
       </div>
     </div>
+  );
+}
+
+// ─── Jira tab ─────────────────────────────────────────────────────────────
+// Dedicated dashboard for the Jira integration. Pulls:
+//   - /api/admin/jira/health  — connection status (live probe)
+//   - /api/admin/activity?event=feature.jira.attach — successes (auto + manual)
+//   - /api/admin/activity?event=feature.jira.error  — failures
+// And renders a green / red split feed plus per-team + per-issue rollups.
+
+const JIRA_BLUE = "#2684FF";
+
+function JiraTab() {
+  const [health, setHealth] = useState<any | null>(null);
+  const [successes, setSuccesses] = useState<any[]>([]);
+  const [errors, setErrors] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(true);
+
+  async function load() {
+    try {
+      const [h, ok, fail] = await Promise.all([
+        adminApi.jiraHealth().catch(() => ({ configured: false })),
+        adminApi.activity({ event: "feature.jira.attach", limit: 100 }),
+        adminApi.activity({ event: "feature.jira.error",  limit: 100 }),
+      ]);
+      setHealth(h);
+      setSuccesses(ok || []);
+      setErrors(fail || []);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to load Jira data", { id: "jira-tab-error" });
+    } finally { setLoading(false); }
+  }
+  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const t = setInterval(load, 15_000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line
+  }, [autoRefresh]);
+
+  // ── Rollups ──────────────────────────────────────────────────────────
+  const total = successes.length + errors.length;
+  const successRate = total === 0 ? 100 : Math.round((successes.length / total) * 100);
+
+  const teamCounts = new Map<string, { team: string; ok: number; fail: number }>();
+  for (const r of successes) {
+    const k = r.team_name || "(no team)";
+    const x = teamCounts.get(k) || { team: k, ok: 0, fail: 0 };
+    x.ok++; teamCounts.set(k, x);
+  }
+  for (const r of errors) {
+    const k = r.team_name || "(no team)";
+    const x = teamCounts.get(k) || { team: k, ok: 0, fail: 0 };
+    x.fail++; teamCounts.set(k, x);
+  }
+  const topTeams = [...teamCounts.values()].sort((a, b) => (b.ok + b.fail) - (a.ok + a.fail)).slice(0, 6);
+
+  const issueCounts = new Map<string, number>();
+  for (const r of successes) {
+    const ji = r.meta?.jira_id;
+    if (ji) issueCounts.set(ji, (issueCounts.get(ji) || 0) + 1);
+  }
+  const topIssues = [...issueCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+
+  return (
+    <div className="space-y-4">
+      {/* ── Header card with the Jira mark + connection status ───────── */}
+      <div className="card p-0 ring-1 ring-bg-border overflow-hidden">
+        <div className="flex items-center gap-4 p-5 bg-gradient-to-r from-[#0052CC]/15 via-[#2684FF]/10 to-transparent border-b border-bg-border">
+          <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#0052CC] to-[#2684FF] grid place-items-center shrink-0 shadow-lg shadow-[#0052CC]/40">
+            <svg viewBox="0 0 24 24" className="w-7 h-7 text-white" fill="currentColor" aria-hidden>
+              <path d="M11.53 2L2 11.53a.6.6 0 000 .85l9.53 9.54a.6.6 0 00.85 0l4.84-4.84-3.42-3.41a4.18 4.18 0 010-5.93L11.53 2z"/>
+            </svg>
+          </div>
+          <div className="leading-tight">
+            <div className="text-lg font-bold tracking-tight">Jira integration</div>
+            <div className="text-xs text-ink-muted">
+              {health?.base_url
+                ? <>Endpoint: <a href={health.base_url} target="_blank" rel="noopener" className="text-[#9bbcff] hover:underline font-mono">{health.base_url}</a></>
+                : "Not configured"}
+            </div>
+          </div>
+          <div className="flex-1" />
+          {health?.configured && health?.ok ? (
+            <div className="pill ring-1 text-xs bg-good/15 text-good ring-good/40 inline-flex items-center gap-2 px-3 py-1.5">
+              <ShieldCheck className="w-4 h-4" />
+              <div className="flex flex-col leading-tight">
+                <span className="font-bold">Connected</span>
+                {health.account && <span className="text-[10px] text-good/80 font-medium">as {health.account}</span>}
+              </div>
+            </div>
+          ) : health?.configured ? (
+            <div className="pill ring-1 text-xs bg-bad/15 text-bad ring-bad/40 inline-flex items-center gap-2 px-3 py-1.5">
+              <AlertCircle className="w-4 h-4" />
+              <div className="flex flex-col leading-tight">
+                <span className="font-bold">Health check failed</span>
+                <span className="text-[10px] text-bad/80 font-mono truncate max-w-[260px]" title={health.error}>{health.error || "—"}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="pill ring-1 text-xs bg-warn/15 text-warn ring-warn/40 inline-flex items-center gap-2 px-3 py-1.5">
+              <AlertTriangleIcon /> Not configured
+            </div>
+          )}
+        </div>
+
+        {/* KPIs row */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 p-4">
+          <KpiCard icon={Paperclip}  label="Total attaches" value={total} tone="brand"
+            hint={`${successes.length} ok · ${errors.length} failed`} />
+          <KpiCard icon={CheckCircle2Icon} label="Success rate"
+            value={`${successRate}%`}
+            tone={successRate >= 95 ? "good" : successRate >= 80 ? "brand" : "good"} />
+          <KpiCard icon={ActivityIcon} label="Successes" value={successes.length} tone="good" />
+          <KpiCard icon={AlertCircle}  label="Errors"    value={errors.length}    tone={errors.length > 0 ? "good" : "good"} />
+        </div>
+      </div>
+
+      {/* ── Filters ──────────────────────────────────────────────────── */}
+      <div className="card p-3 flex flex-wrap items-center gap-3">
+        <span className="text-[11px] uppercase tracking-wider text-ink-dim font-mono">Showing all</span>
+        <span className="pill ring-1 text-[10px] bg-good/10 text-good ring-good/30 inline-flex items-center gap-1">
+          <CheckCircle2Icon /> success
+        </span>
+        <span className="pill ring-1 text-[10px] bg-bad/10 text-bad ring-bad/30 inline-flex items-center gap-1">
+          <AlertCircle className="w-3 h-3" /> error
+        </span>
+        events from the activity log.
+        <div className="flex-1" />
+        <label className="text-[11px] text-ink-muted inline-flex items-center gap-1.5">
+          <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} />
+          Auto-refresh
+        </label>
+        <button onClick={load} className="btn-ghost text-xs"><RefreshCw className="w-3.5 h-3.5" /> Refresh</button>
+      </div>
+
+      {/* ── Team & issue rollups ─────────────────────────────────────── */}
+      <div className="grid lg:grid-cols-2 gap-4">
+        <div className="card p-4">
+          <div className="text-sm font-bold mb-3 flex items-center gap-2">
+            <Users className="w-4 h-4 text-cool" /> Teams using Jira integration
+          </div>
+          <div className="space-y-1.5">
+            {topTeams.length === 0 && <div className="text-xs text-ink-muted py-4 text-center">No Jira activity yet.</div>}
+            {topTeams.map((t, i) => {
+              const tot = t.ok + t.fail;
+              const okPct = tot ? (t.ok / tot) * 100 : 0;
+              return (
+                <div key={t.team || i} className="flex items-center gap-2 text-xs">
+                  <div className="w-32 truncate font-bold" title={t.team}>{t.team}</div>
+                  <div className="flex-1 h-2 bg-bg-card rounded overflow-hidden ring-1 ring-bg-border flex">
+                    <div className="h-full bg-good" style={{ width: `${okPct}%` }} />
+                    <div className="h-full bg-bad" style={{ width: `${100 - okPct}%` }} />
+                  </div>
+                  <div className="font-mono tabular-nums w-16 text-right text-ink-muted">{tot}</div>
+                  <div className="font-mono tabular-nums w-12 text-right text-good">✓{t.ok}</div>
+                  <div className="font-mono tabular-nums w-12 text-right text-bad">×{t.fail}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+        <div className="card p-4">
+          <div className="text-sm font-bold mb-3 flex items-center gap-2">
+            <Paperclip className="w-4 h-4 text-[#9bbcff]" /> Most-attached Jira issues
+          </div>
+          <div className="space-y-1">
+            {topIssues.length === 0 && <div className="text-xs text-ink-muted py-4 text-center">No attaches yet.</div>}
+            {topIssues.map(([key, count]) => (
+              <div key={key} className="flex items-center gap-2 text-xs">
+                <span className="pill ring-1 text-[11px] bg-[#2684FF]/10 text-[#9bbcff] ring-[#2684FF]/30 font-mono">
+                  {key}
+                </span>
+                <div className="flex-1" />
+                <span className="font-mono text-ink-muted">{count} attach{count === 1 ? "" : "es"}</span>
+                {health?.base_url && (
+                  <a href={`${health.base_url}/browse/${key}`} target="_blank" rel="noopener"
+                    className="text-ink-muted hover:text-[#9bbcff]"><ExternalLink className="w-3 h-3" /></a>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Two-column feed: success | error ─────────────────────────── */}
+      <div className="grid lg:grid-cols-2 gap-4">
+        <FeedCard
+          title="Recent success"
+          tone="good"
+          icon={<CheckCircle2Icon />}
+          items={successes}
+          empty="No successful attaches yet."
+          renderRow={(r) => <FeedRow r={r} kind="success" baseURL={health?.base_url} />}
+          loading={loading}
+        />
+        <FeedCard
+          title="Recent errors"
+          tone="bad"
+          icon={<AlertCircle className="w-4 h-4 text-bad" />}
+          items={errors}
+          empty="No Jira errors. Healthy. 🎉"
+          renderRow={(r) => <FeedRow r={r} kind="error" baseURL={health?.base_url} />}
+          loading={loading}
+        />
+      </div>
+    </div>
+  );
+}
+
+function FeedCard({
+  title, tone, icon, items, empty, renderRow, loading,
+}: {
+  title: string;
+  tone: "good" | "bad";
+  icon: any;
+  items: any[];
+  empty: string;
+  renderRow: (r: any) => any;
+  loading: boolean;
+}) {
+  const ring = tone === "good" ? "ring-good/20" : "ring-bad/20";
+  const headerBG = tone === "good" ? "bg-good/[.04]" : "bg-bad/[.04]";
+  return (
+    <div className={`card p-0 ring-1 ${ring} overflow-hidden`}>
+      <div className={`px-3 py-2 border-b border-bg-border flex items-center gap-2 ${headerBG}`}>
+        {icon}
+        <div className="text-sm font-bold">{title}</div>
+        <span className="text-[10px] text-ink-dim font-mono">{items.length}</span>
+      </div>
+      <div className="max-h-[60vh] overflow-y-auto divide-y divide-bg-border/60">
+        {loading ? (
+          <div className="p-8 text-center text-ink-muted text-xs">
+            <RefreshCw className="w-5 h-5 mx-auto mb-2 opacity-30 animate-spin" /> Loading…
+          </div>
+        ) : items.length === 0 ? (
+          <div className="p-10 text-center text-ink-muted text-xs">{empty}</div>
+        ) : items.map((r) => (
+          <div key={r.id}>{renderRow(r)}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FeedRow({ r, kind, baseURL }: { r: any; kind: "success" | "error"; baseURL?: string }) {
+  const ji = r.meta?.jira_id as string | undefined;
+  const issueURL = ji && baseURL ? `${baseURL}/browse/${ji}` : null;
+  return (
+    <div className={`p-3 text-xs hover:bg-white/[.02]`}>
+      <div className="flex items-start gap-2 flex-wrap">
+        <span className="font-mono text-ink-muted shrink-0" title={r.ts}>
+          {new Date(r.ts).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+        </span>
+        <span className="pill ring-1 text-[10px] bg-bg-card ring-bg-border text-ink-muted shrink-0">
+          {r.team_name || "—"}
+        </span>
+        {ji && (
+          <span className="pill ring-1 text-[10px] bg-[#2684FF]/10 text-[#9bbcff] ring-[#2684FF]/30 shrink-0 font-mono inline-flex items-center gap-1">
+            {ji}
+            {issueURL && <a href={issueURL} target="_blank" rel="noopener" className="hover:underline"><ExternalLink className="w-3 h-3" /></a>}
+          </span>
+        )}
+        {r.actor_type === "system" && (
+          <span className="pill ring-1 text-[9px] bg-cool/10 text-cool ring-cool/30 shrink-0 uppercase tracking-wider">
+            auto
+          </span>
+        )}
+        {r.actor_name && (
+          <span className="text-ink-muted shrink-0 truncate">by {r.actor_name}</span>
+        )}
+      </div>
+      {kind === "success" && r.meta?.filename && (
+        <div className="mt-1 text-[11px] text-ink flex items-center gap-1.5">
+          <FileDown className="w-3 h-3 text-sky-400 shrink-0" />
+          <span className="font-mono truncate" title={r.meta.filename}>{r.meta.filename}</span>
+          {r.meta.bytes ? <span className="text-ink-dim">· {Math.round(Number(r.meta.bytes)/1024)} KB</span> : null}
+        </div>
+      )}
+      {kind === "error" && (
+        <div className="mt-1 text-[11px] flex items-start gap-1.5">
+          <AlertCircle className="w-3 h-3 text-bad shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            {r.meta?.reason && (
+              <span className="pill ring-1 text-[9px] bg-warn/15 text-warn ring-warn/30 mr-1 font-mono uppercase tracking-wider">
+                {r.meta.reason}
+              </span>
+            )}
+            <span className="text-bad font-mono break-all" title={r.meta?.error}>
+              {r.meta?.error || "unknown error"}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Tiny adapters so we don't have to import the same icons twice from
+// different scopes. Lucide icons are tree-shaken so duplicate imports
+// would already de-dup; these just keep the JSX above readable.
+function CheckCircle2Icon() { return <CheckCircle2Inner />; }
+function CheckCircle2Inner() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 text-good shrink-0" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/>
+    </svg>
+  );
+}
+function AlertTriangleIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+      <line x1="12" y1="9" x2="12" y2="13"/>
+      <line x1="12" y1="17" x2="12.01" y2="17"/>
+    </svg>
   );
 }

@@ -19,6 +19,7 @@ import { VerdictBanner } from "../components/ui/VerdictBanner";
 import { TestedBy } from "../components/ui/TestedBy";
 import { PDFDownloadModal } from "../components/ui/PDFDownloadModal";
 import { CostCard } from "../components/ui/CostCard";
+import { JiraAttachButton } from "../components/ui/JiraAttachButton";
 
 type Aggregates = {
   Requests?: number; Errors?: number; Successes?: number;
@@ -152,6 +153,10 @@ export default function ReportDetail() {
         notes={r.notes}
         envTag={r.env_tag}
       />
+
+      {/* Attach this report to its Jira issue. Hides itself when CH_JIRA_*
+          env isn't configured server-side. Errors surface as toasts here. */}
+      <JiraAttachButton runID={id} jiraID={r.jira_id} envTag={r.env_tag} />
 
       {/* Cost estimate (only shown when user provided cost inputs) */}
       <CostCard estimate={r.cost_estimate} />

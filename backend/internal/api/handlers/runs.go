@@ -23,15 +23,16 @@ type RunsHandler struct {
 }
 
 type startBody struct {
-	TestID     string                 `json:"test_id"`
-	Curl       string                 `json:"curl"`
-	Config     *engine.TestConfig     `json:"config"`
-	CreatedBy  string                 `json:"created_by"`
-	JiraID     string                 `json:"jira_id"`
-	JiraLink   string                 `json:"jira_link"`
-	Notes      string                 `json:"notes"`
-	EnvTag     string                 `json:"env_tag"`
-	CostInputs map[string]interface{} `json:"cost_inputs"`
+	TestID         string                 `json:"test_id"`
+	Curl           string                 `json:"curl"`
+	Config         *engine.TestConfig     `json:"config"`
+	CreatedBy      string                 `json:"created_by"`
+	JiraID         string                 `json:"jira_id"`
+	JiraLink       string                 `json:"jira_link"`
+	Notes          string                 `json:"notes"`
+	EnvTag         string                 `json:"env_tag"`
+	CostInputs     map[string]interface{} `json:"cost_inputs"`
+	AutoAttachJira bool                   `json:"auto_attach_jira"`
 }
 
 func (h *RunsHandler) Start(c *gin.Context) {
@@ -108,12 +109,13 @@ func (h *RunsHandler) Start(c *gin.Context) {
 		}
 	}
 	meta := engine.RunMeta{
-		CreatedBy:  body.CreatedBy,
-		JiraID:     body.JiraID,
-		JiraLink:   body.JiraLink,
-		Notes:      body.Notes,
-		EnvTag:     envTag,
-		CostInputs: body.CostInputs,
+		CreatedBy:      body.CreatedBy,
+		JiraID:         body.JiraID,
+		JiraLink:       body.JiraLink,
+		Notes:          body.Notes,
+		EnvTag:         envTag,
+		CostInputs:     body.CostInputs,
+		AutoAttachJira: body.AutoAttachJira,
 	}
 
 	teamID := middleware.TeamID(c)

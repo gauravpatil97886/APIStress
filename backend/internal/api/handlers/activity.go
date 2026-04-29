@@ -36,6 +36,7 @@ var clientAllowedEvents = map[string]bool{
 	"feature.runner.start":    true,
 	"feature.runner.export":   true,
 	"feature.pw.export":       true,
+	"feature.jira.attach":     true,
 }
 
 func (h *ActivityHandler) Log(c *gin.Context) {

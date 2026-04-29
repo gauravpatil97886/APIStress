@@ -23,6 +23,9 @@ var teamsSQL string
 //go:embed migrations/004_activity.sql
 var activitySQL string
 
+//go:embed migrations/005_jira.sql
+var jiraSQL string
+
 type DB struct {
 	Pool *pgxpool.Pool
 }
@@ -72,6 +75,11 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 		pool.Close()
 		logger.Error("migration 004 failed", zap.Error(err))
 		return nil, fmt.Errorf("migrate 004: %w", err)
+	}
+	if _, err := pool.Exec(ctx, jiraSQL); err != nil {
+		pool.Close()
+		logger.Error("migration 005 failed", zap.Error(err))
+		return nil, fmt.Errorf("migrate 005: %w", err)
 	}
 	logger.Info("postgres migrations applied")
 

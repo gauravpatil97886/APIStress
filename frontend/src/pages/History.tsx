@@ -11,6 +11,7 @@ import { RunStatusBadge } from "../components/ui/RunStatusBadge";
 import { MiniCountdown } from "../components/ui/MiniCountdown";
 import { EnvPill, ENV_TAGS } from "../components/ui/EnvPill";
 import { PDFDownloadModal } from "../components/ui/PDFDownloadModal";
+import { JiraSendButton } from "../components/ui/JiraSendButton";
 
 type Run = {
   id: string;
@@ -288,6 +289,8 @@ export default function History() {
                           >
                             <RotateCcw className="w-3.5 h-3.5" />
                           </Link>
+                          <JiraSendButton runID={r.id} jiraID={r.jira_id} />
+
                           <button
                             onClick={() => toggleCompare(r.id)}
                             title={compareIDs.includes(r.id) ? "Remove from comparison" : "Add to comparison (pick 2)"}

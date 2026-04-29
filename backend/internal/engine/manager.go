@@ -63,6 +63,8 @@ type Manager struct {
 	mu     sync.RWMutex
 	runs   map[string]*ManagedRun
 	makeEx func(cfg *TestConfig) (Executor, error)
+
+	onFinish FinishHook // optional — called once per run after summary is persisted
 }
 
 func NewManager(pool *pgxpool.Pool, makeEx func(cfg *TestConfig) (Executor, error)) *Manager {
@@ -72,6 +74,11 @@ func NewManager(pool *pgxpool.Pool, makeEx func(cfg *TestConfig) (Executor, erro
 		makeEx: makeEx,
 	}
 }
+
+// SetFinishHook registers a callback invoked when a run finishes. The hook
+// runs in its own goroutine off the run's lifecycle so auto-attach errors
+// (Jira down, network blip) never block the manager from cleaning up.
+func (m *Manager) SetFinishHook(h FinishHook) { m.onFinish = h }
 
 func newID() string {
 	var b [16]byte
@@ -88,13 +95,22 @@ func newID() string {
 }
 
 type RunMeta struct {
-	CreatedBy  string                 `json:"created_by"`
-	JiraID     string                 `json:"jira_id"`
-	JiraLink   string                 `json:"jira_link"`
-	Notes      string                 `json:"notes"`
-	EnvTag     string                 `json:"env_tag"`     // Production, Broking, UAT
-	CostInputs map[string]interface{} `json:"cost_inputs"` // raw cost.Inputs as JSON
+	CreatedBy      string                 `json:"created_by"`
+	JiraID         string                 `json:"jira_id"`
+	JiraLink       string                 `json:"jira_link"`
+	Notes          string                 `json:"notes"`
+	EnvTag         string                 `json:"env_tag"`     // Production, Broking, UAT
+	CostInputs     map[string]interface{} `json:"cost_inputs"` // raw cost.Inputs as JSON
+	// AutoAttachJira: when true and Jira integration is configured, the
+	// run-finished hook auto-uploads the PDF + posts a summary comment
+	// without the operator having to click anything on the report page.
+	AutoAttachJira bool `json:"auto_attach_jira"`
 }
+
+// FinishHook is invoked once a run reaches a terminal state. The auto-attach
+// path uses this to push the report to Jira without the runs handler having
+// to know about Jira at all.
+type FinishHook func(ctx context.Context, mr *ManagedRun)
 
 func (m *Manager) Start(ctx context.Context, cfg *TestConfig, testID string, meta RunMeta, teamID string) (*ManagedRun, error) {
 	if err := cfg.Validate(); err != nil {
@@ -210,6 +226,19 @@ func (m *Manager) Start(ctx context.Context, cfg *TestConfig, testID string, met
 			delete(mr.subs, s)
 		}
 		mr.mu.Unlock()
+		// Fire registered finish hook (e.g. auto-attach to Jira). Detached
+		// goroutine so a slow Jira upload can't block the manager.
+		if m.onFinish != nil {
+			hook := m.onFinish
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logger.Error("finish hook panicked", zap.String("run_id", id), zap.Any("panic", r))
+					}
+				}()
+				hook(context.Background(), mr)
+			}()
+		}
 	}()
 	return mr, nil
 }
