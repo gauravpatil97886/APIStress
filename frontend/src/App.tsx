@@ -11,6 +11,7 @@ import Reports from "./pages/Reports";
 import ReportDetail from "./pages/ReportDetail";
 import History from "./pages/History";
 import Compare from "./pages/Compare";
+import Overview from "./pages/Overview";
 import SavedTests from "./pages/SavedTests";
 import Environments from "./pages/Environments";
 
@@ -26,6 +27,7 @@ export default function App() {
         <Route path="/" element={<Dashboard />} />
         <Route path="/builder" element={<TestBuilder />} />
         <Route path="/tests" element={<SavedTests />} />
+        <Route path="/overview" element={<Overview />} />
         <Route path="/history" element={<History />} />
         <Route path="/compare" element={<Compare />} />
         <Route path="/runs" element={<Runs />} />

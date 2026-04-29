@@ -29,8 +29,9 @@ CREATE INDEX IF NOT EXISTS idx_runs_status      ON runs(status);
 CREATE INDEX IF NOT EXISTS idx_runs_jira_id     ON runs(jira_id);
 CREATE INDEX IF NOT EXISTS idx_runs_created_by  ON runs(created_by);
 
--- Backfill column for already-created databases (idempotent).
-ALTER TABLE runs ADD COLUMN IF NOT EXISTS env_tag TEXT NOT NULL DEFAULT '';
+-- Backfill columns for already-created databases (idempotent).
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS env_tag      TEXT  NOT NULL DEFAULT '';
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS cost_inputs  JSONB NOT NULL DEFAULT '{}'::jsonb;
 CREATE INDEX IF NOT EXISTS idx_runs_env_tag ON runs(env_tag);
 
 CREATE TABLE IF NOT EXISTS run_metrics (

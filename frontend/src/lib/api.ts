@@ -60,4 +60,5 @@ export const api = {
 
   liveURL: (id: string) => `${BASE}/api/runs/${id}/live?key=${encodeURIComponent(getKey())}`,
   compare: (a: string, b: string) => req<any>(`/api/compare?a=${a}&b=${b}`),
+  costPricing: () => req<any>(`/api/cost/pricing`),
 };

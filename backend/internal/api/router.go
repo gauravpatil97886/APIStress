@@ -49,6 +49,9 @@ func New(cfg *config.Config, db *pgxpool.Pool, mgr *engine.Manager) *gin.Engine 
 	cmp := &handlers.CompareHandler{DB: db}
 	protected.GET("/compare", cmp.Compare)
 
+	cost := &handlers.CostHandler{}
+	protected.GET("/cost/pricing", cost.Pricing)
+
 	envs := &handlers.EnvironmentsHandler{DB: db}
 	protected.GET("/environments", envs.List)
 	protected.POST("/environments", envs.Create)

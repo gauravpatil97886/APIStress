@@ -18,6 +18,7 @@ import { RunStatusBadge } from "../components/ui/RunStatusBadge";
 import { VerdictBanner } from "../components/ui/VerdictBanner";
 import { TestedBy } from "../components/ui/TestedBy";
 import { PDFDownloadModal } from "../components/ui/PDFDownloadModal";
+import { CostCard } from "../components/ui/CostCard";
 
 type Aggregates = {
   Requests?: number; Errors?: number; Successes?: number;
@@ -151,6 +152,9 @@ export default function ReportDetail() {
         notes={r.notes}
         envTag={r.env_tag}
       />
+
+      {/* Cost estimate (only shown when user provided cost inputs) */}
+      <CostCard estimate={r.cost_estimate} />
 
       {/* Executive summary */}
       <ExecutiveSummary agg={agg} cfg={cfg} />

@@ -1,4 +1,4 @@
-.PHONY: help install quickstart up down restart logs backend frontend tidy fmt lint cli build clean
+.PHONY: help install quickstart dev up down restart logs backend frontend tidy fmt lint cli build clean
 
 help:                ## Show this help
 	@echo "APIStress — make targets"
@@ -6,6 +6,9 @@ help:                ## Show this help
 
 install:             ## Run the one-command installer (Docker + .env + boot)
 	./scripts/install.sh
+
+dev:                 ## Run Postgres + backend + frontend natively (Ctrl+C stops all)
+	./scripts/dev.sh
 
 quickstart: install  ## Alias for `install`
 

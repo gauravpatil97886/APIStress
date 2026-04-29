@@ -3,7 +3,7 @@ import { NavLink, useLocation, useNavigate, Outlet } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard, FlaskConical, Activity, FileText, LogOut, Server, Plus,
-  History as HistoryIcon, Menu, X,
+  History as HistoryIcon, Menu, X, BookOpen,
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { Wordmark } from "./Logo";
@@ -12,12 +12,13 @@ import { RunNotifier } from "./RunNotifier";
 import { CreatedBy } from "./CreatedBy";
 
 const items = [
-  { to: "/",         label: "Dashboard",  Icon: LayoutDashboard },
-  { to: "/builder",  label: "New Test",   Icon: Plus },
-  { to: "/history",  label: "History",    Icon: HistoryIcon },
+  { to: "/",         label: "Dashboard",   Icon: LayoutDashboard },
+  { to: "/overview", label: "Guide",       Icon: BookOpen, highlight: true },
+  { to: "/builder",  label: "New Test",    Icon: Plus },
+  { to: "/history",  label: "History",     Icon: HistoryIcon },
   { to: "/tests",    label: "Saved Tests", Icon: FlaskConical },
   { to: "/runs",     label: "Active Runs", Icon: Activity },
-  { to: "/reports",  label: "Reports",    Icon: FileText },
+  { to: "/reports",  label: "Reports",     Icon: FileText },
   { to: "/environments", label: "Environments", Icon: Server },
 ];
 

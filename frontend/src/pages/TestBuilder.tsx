@@ -7,6 +7,8 @@ import {
 } from "lucide-react";
 import { api, getUser, setUser } from "../lib/api";
 import { ENV_TAGS, ENV_LABEL } from "../components/ui/EnvPill";
+import { CostInputsPanel, type CostInputs } from "../components/builder/CostInputs";
+import { parseCurl, prettyJSON, headersToText, suggestName } from "../lib/curl";
 
 const PATTERNS = [
   { v: "constant", label: "Constant", desc: "Hold N VUs for the whole duration." },
@@ -40,6 +42,7 @@ export default function TestBuilder() {
   const [jiraLink, setJiraLink] = useState("");
   const [notes, setNotes] = useState("");
   const [envTag, setEnvTag] = useState<string>("");
+  const [costInputs, setCostInputs] = useState<CostInputs>({});
   const [busy, setBusy] = useState(false);
 
   useEffect(() => { if (createdBy) setUser(createdBy); }, [createdBy]);
@@ -78,13 +81,48 @@ export default function TestBuilder() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromRun]);
 
-  function importCurl() {
-    if (!curlText.trim()) return toast.error("Paste a curl command first");
-    // Minimal client-side feedback only; backend re-parses authoritatively.
-    const m = curlText.match(/-X\s+(\w+)/i); if (m) setMethod(m[1].toUpperCase());
-    const u = curlText.match(/['"]?(https?:\/\/[^\s'"]+)['"]?/);
-    if (u) setUrl(u[1]);
-    toast.success("Imported — backend will re-parse on start");
+  function importCurl(sourceOverride?: string) {
+    const source = (sourceOverride ?? curlText).trim();
+    if (!source) return toast.error("Paste a curl command first");
+    try {
+      const p = parseCurl(source);
+      if (!p.url) return toast.error("Couldn't find a URL in that curl command.");
+      setMethod(p.method);
+      setUrl(p.url);
+      setHeadersText(headersToText(p.headers));
+      setBody(prettyJSON(p.body));
+      // Auto-name only if user hasn't set a custom one already.
+      if (name === "Untitled load test" || !name.trim()) {
+        setName(p.suggestedName);
+      }
+      // Clear the curl box so the form is the source of truth from now on.
+      setCurlText("");
+      const headerCount = Object.keys(p.headers).length;
+      const bytes = p.body ? new TextEncoder().encode(p.body).length : 0;
+      toast.success(
+        `Imported · ${p.method} · ${headerCount} header${headerCount === 1 ? "" : "s"}` +
+        (bytes ? ` · ${bytes} B body` : "")
+      );
+    } catch (err: any) {
+      toast.error(err.message || "Couldn't parse that curl command");
+    }
+  }
+
+  // Auto-name when the URL changes and the user hasn't customised the name.
+  function onURLBlur() {
+    if (!url.trim()) return;
+    if (!name.trim() || name === "Untitled load test" || name.endsWith("(re-run)")) {
+      setName(suggestName(method, url));
+    }
+  }
+
+  function addHeaderPreset(line: string) {
+    const next = headersText.trim();
+    setHeadersText(next ? next + "\n" + line : line);
+    toast.success("Header added");
+  }
+  function prettyBody() {
+    setBody(prettyJSON(body));
   }
 
   function parseHeaders(): Record<string, string> {
@@ -127,6 +165,7 @@ export default function TestBuilder() {
         jira_link: jiraLink.trim(),
         notes: notes.trim(),
         env_tag: envTag,
+        cost_inputs: costInputs.cloud ? costInputs : undefined,
       };
       const { run_id } = await api.startRun(payload);
       toast.success("Load test started");
@@ -163,20 +202,60 @@ export default function TestBuilder() {
         <div className="lg:col-span-2 space-y-6">
 
           <section className="card p-5">
-            <h2 className="text-sm font-semibold mb-3 flex items-center gap-2"><Sparkles className="w-4 h-4 text-brand" />Quick import: paste a curl</h2>
-            <textarea value={curlText} onChange={(e) => setCurlText(e.target.value)}
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+              <h2 className="text-sm font-semibold flex items-center gap-2">
+                <Sparkles className="w-4 h-4 text-brand" />
+                Quick import: paste a curl
+              </h2>
+              <span className="text-[11px] text-ink-muted">
+                We'll fill <b className="text-ink">URL · method · headers · body</b> below.
+              </span>
+            </div>
+            <textarea
+              value={curlText}
+              onChange={(e) => setCurlText(e.target.value)}
+              onPaste={(e) => {
+                // Auto-import if user pastes a clean curl command directly.
+                const t = e.clipboardData.getData("text").trim();
+                if (t.startsWith("curl ")) {
+                  e.preventDefault();
+                  setCurlText(t);
+                  // Pass the pasted text directly — state hasn't flushed yet.
+                  importCurl(t);
+                }
+              }}
               className="input w-full font-mono text-xs h-24"
-              placeholder="curl -X POST 'https://api.example.com/v1/widgets' -H 'Authorization: Bearer …' -d '{...}'"/>
+              placeholder="curl -X POST 'https://api.example.com/v1/widgets' -H 'Authorization: Bearer …' -d '{...}'"
+            />
             <div className="mt-2 flex justify-end">
-              <button onClick={importCurl} className="btn-secondary text-sm"><Clipboard className="w-4 h-4" />Import</button>
+              <button onClick={() => importCurl()} className="btn-primary text-sm">
+                <Clipboard className="w-4 h-4" />Import
+              </button>
             </div>
           </section>
 
           <section className="card p-5 space-y-4">
             <h2 className="text-sm font-semibold">Request</h2>
             <div>
-              <label className="label">Name</label>
-              <input className="input w-full" value={name} onChange={(e) => setName(e.target.value)} />
+              <div className="flex items-end justify-between gap-2 mb-1.5">
+                <label className="label !mb-0">Name</label>
+                {url && (
+                  <button
+                    type="button"
+                    onClick={() => setName(suggestName(method, url))}
+                    className="text-[10px] uppercase tracking-wider text-brand hover:underline"
+                    title="Auto-generate name from URL"
+                  >
+                    ↺ auto-name
+                  </button>
+                )}
+              </div>
+              <input
+                className="input w-full"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Auto-fills from URL — or type your own"
+              />
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div>
@@ -193,16 +272,70 @@ export default function TestBuilder() {
               </div>
               <div className="col-span-3">
                 <label className="label">URL</label>
-                <input className="input w-full font-mono" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://api.example.com/health" />
+                <input
+                  className="input w-full font-mono"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  onBlur={onURLBlur}
+                  placeholder="https://api.example.com/health"
+                />
               </div>
             </div>
             <div>
-              <label className="label">Headers (one per line: Key: Value)</label>
-              <textarea className="input w-full font-mono text-xs h-20" value={headersText} onChange={(e) => setHeadersText(e.target.value)} />
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <label className="label !mb-0">
+                  Headers
+                  {headersText.trim() && (
+                    <span className="ml-1.5 pill ring-1 ring-brand/30 bg-brand/10 text-brand text-[9px] font-mono">
+                      {headersText.split(/\r?\n/).filter((l) => l.includes(":")).length}
+                    </span>
+                  )}
+                </label>
+                <div className="flex gap-1 flex-wrap">
+                  <button type="button" onClick={() => addHeaderPreset("Authorization: Bearer ")}
+                    className="text-[10px] uppercase tracking-wider text-ink-muted hover:text-brand px-2 py-1 rounded bg-bg-card ring-1 ring-bg-border">
+                    + Bearer
+                  </button>
+                  <button type="button" onClick={() => addHeaderPreset("Content-Type: application/json")}
+                    className="text-[10px] uppercase tracking-wider text-ink-muted hover:text-brand px-2 py-1 rounded bg-bg-card ring-1 ring-bg-border">
+                    + JSON
+                  </button>
+                  <button type="button" onClick={() => addHeaderPreset("Accept: application/json")}
+                    className="text-[10px] uppercase tracking-wider text-ink-muted hover:text-brand px-2 py-1 rounded bg-bg-card ring-1 ring-bg-border">
+                    + Accept
+                  </button>
+                </div>
+              </div>
+              <textarea
+                className="input w-full font-mono text-xs h-24"
+                value={headersText}
+                onChange={(e) => setHeadersText(e.target.value)}
+                placeholder="Key: Value (one per line)"
+              />
             </div>
             <div>
-              <label className="label">Body</label>
-              <textarea className="input w-full font-mono text-xs h-24" value={body} onChange={(e) => setBody(e.target.value)} placeholder='{"foo": "bar"}'/>
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <label className="label !mb-0">
+                  Body
+                  {body && (
+                    <span className="ml-1.5 text-[10px] text-ink-muted font-mono">
+                      {new TextEncoder().encode(body).length} B
+                    </span>
+                  )}
+                </label>
+                {body && (
+                  <button type="button" onClick={prettyBody}
+                    className="text-[10px] uppercase tracking-wider text-ink-muted hover:text-brand px-2 py-1 rounded bg-bg-card ring-1 ring-bg-border">
+                    ↺ Format JSON
+                  </button>
+                )}
+              </div>
+              <textarea
+                className="input w-full font-mono text-xs h-32"
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                placeholder='{"foo": "bar"}'
+              />
             </div>
           </section>
 
@@ -316,6 +449,9 @@ export default function TestBuilder() {
           </section>
         </aside>
       </div>
+
+      {/* Cost estimate spans full width below — needs the room */}
+      <CostInputsPanel value={costInputs} onChange={setCostInputs} />
     </div>
   );
 }

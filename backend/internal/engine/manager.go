@@ -87,11 +87,12 @@ func newID() string {
 }
 
 type RunMeta struct {
-	CreatedBy string `json:"created_by"`
-	JiraID    string `json:"jira_id"`
-	JiraLink  string `json:"jira_link"`
-	Notes     string `json:"notes"`
-	EnvTag    string `json:"env_tag"` // Production, Broking, UAT — free-form but UI offers 3
+	CreatedBy  string                 `json:"created_by"`
+	JiraID     string                 `json:"jira_id"`
+	JiraLink   string                 `json:"jira_link"`
+	Notes      string                 `json:"notes"`
+	EnvTag     string                 `json:"env_tag"`     // Production, Broking, UAT
+	CostInputs map[string]interface{} `json:"cost_inputs"` // raw cost.Inputs as JSON
 }
 
 func (m *Manager) Start(ctx context.Context, cfg *TestConfig, testID string, meta RunMeta) (*ManagedRun, error) {
@@ -105,10 +106,14 @@ func (m *Manager) Start(ctx context.Context, cfg *TestConfig, testID string, met
 	if testID != "" {
 		testIDArg = testID
 	}
+	costInputsJSON, _ := json.Marshal(meta.CostInputs)
+	if string(costInputsJSON) == "null" {
+		costInputsJSON = []byte("{}")
+	}
 	_, err := m.pool.Exec(ctx,
-		`INSERT INTO runs (id, test_id, name, config, status, started_at, created_by, jira_id, jira_link, notes, env_tag)
-		 VALUES ($1, $2, $3, $4, 'running', NOW(), $5, $6, $7, $8, $9)`,
-		id, testIDArg, cfg.Name, cfgJSON, meta.CreatedBy, meta.JiraID, meta.JiraLink, meta.Notes, meta.EnvTag,
+		`INSERT INTO runs (id, test_id, name, config, status, started_at, created_by, jira_id, jira_link, notes, env_tag, cost_inputs)
+		 VALUES ($1, $2, $3, $4, 'running', NOW(), $5, $6, $7, $8, $9, $10)`,
+		id, testIDArg, cfg.Name, cfgJSON, meta.CreatedBy, meta.JiraID, meta.JiraLink, meta.Notes, meta.EnvTag, costInputsJSON,
 	)
 	if err != nil {
 		logger.Error("failed to insert run", zap.String("run_id", id), zap.Error(err))

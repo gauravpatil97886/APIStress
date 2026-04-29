@@ -363,6 +363,25 @@ const htmlTpl = `<!DOCTYPE html>
 </table>
 {{end}}{{end}}
 
+{{if .Stack}}{{if gt (len .Stack) 0}}
+<h2>Tech Stack Tagged</h2>
+<div class="lede">Components declared as part of this API — used for cost projection and traceability.</div>
+<table>
+  <thead><tr><th>Component</th><th>Category</th><th>Tier</th><th style="text-align:right">Count</th><th style="text-align:right">$/month</th></tr></thead>
+  <tbody>
+    {{range .Stack}}
+    <tr>
+      <td><b>{{.Label}}</b></td>
+      <td class="muted">{{.Category}}</td>
+      <td class="muted">{{.TierLabel}}</td>
+      <td class="num" style="text-align:right">{{.Count}}</td>
+      <td class="num" style="text-align:right">${{fmtFloat .MonthlyUSD}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}{{end}}
+
 <h2>Test Configuration</h2>
 <div class="lede">Exact parameters used — reproducible.</div>
 <table>
