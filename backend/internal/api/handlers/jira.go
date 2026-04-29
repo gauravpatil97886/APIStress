@@ -48,6 +48,30 @@ func (h *JiraHandler) Health(c *gin.Context) {
 		if name, _ := me["displayName"].(string); name != "" {
 			out["account"] = name
 		}
+		if email, _ := me["emailAddress"].(string); email != "" {
+			out["email"] = email
+		}
+		if id, _ := me["accountId"].(string); id != "" {
+			out["account_id"] = id
+		}
+		// Pick the largest avatar Atlassian offered.
+		if avatars, ok := me["avatarUrls"].(map[string]interface{}); ok {
+			for _, sz := range []string{"48x48", "32x32", "24x24", "16x16"} {
+				if u, _ := avatars[sz].(string); u != "" {
+					out["avatar"] = u
+					break
+				}
+			}
+		}
+		if tz, _ := me["timeZone"].(string); tz != "" {
+			out["timezone"] = tz
+		}
+		if locale, _ := me["locale"].(string); locale != "" {
+			out["locale"] = locale
+		}
+		if active, ok := me["active"].(bool); ok {
+			out["active"] = active
+		}
 	} else {
 		out["ok"] = false
 		out["error"] = err.Error()

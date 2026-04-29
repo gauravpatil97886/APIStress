@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/choicetechlab/choicehammer/internal/logger"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -150,15 +151,20 @@ func (s *Service) List(ctx context.Context, f ListFilter) ([]ListItem, error) {
 		var it ListItem
 		var metaRaw []byte
 		var ip, ua *string
-		var tsStr string
+		// `ts` column is TIMESTAMPTZ — must scan into time.Time, NOT string.
+		// (Earlier version scanned into string and silently dropped every row,
+		// making the admin activity feed look empty even though events were
+		// being written correctly.)
+		var ts time.Time
 		if err := rows.Scan(&it.ID, &it.TeamID, &it.TeamName, &it.ActorType, &it.ActorName, &it.EventType,
-			&it.ToolSlug, &it.ResourceType, &it.ResourceID, &metaRaw, &ip, &ua, &tsStr); err != nil {
+			&it.ToolSlug, &it.ResourceType, &it.ResourceID, &metaRaw, &ip, &ua, &ts); err != nil {
+			logger.Warn("activity list scan failed", zap.Error(err))
 			continue
 		}
 		_ = json.Unmarshal(metaRaw, &it.Meta)
 		if ip != nil { it.IP = *ip }
 		if ua != nil { it.UA = *ua }
-		it.TS = tsStr
+		it.TS = ts.Format(time.RFC3339)
 		out = append(out, it)
 	}
 	return out, nil

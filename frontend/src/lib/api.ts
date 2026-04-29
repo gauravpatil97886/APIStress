@@ -227,5 +227,7 @@ export const adminApi = {
   jiraHealth: () => adminReq<{
     configured: boolean; ok?: boolean; account?: string; base_url?: string;
     auth_kind?: string; project?: string; error?: string;
+    email?: string; account_id?: string; avatar?: string; timezone?: string;
+    locale?: string; active?: boolean;
   }>("/api/admin/jira/health"),
 };

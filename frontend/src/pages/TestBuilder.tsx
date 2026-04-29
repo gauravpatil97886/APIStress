@@ -449,7 +449,7 @@ export default function TestBuilder() {
             <p className="text-xs text-ink-muted -mt-2">These will appear at the top of the generated report.</p>
             <div>
               <label className="label">Your name <span className="text-bad">*</span></label>
-              <input className="input w-full" value={createdBy} onChange={(e) => setCreatedBy(e.target.value)} placeholder="e.g. Aisha Khan" />
+              <input className="input w-full" value={createdBy} onChange={(e) => setCreatedBy(e.target.value)} placeholder="e.g. Gaurav Patil" />
             </div>
             <div>
               <label className="label">Environment <span className="text-bad">*</span></label>
@@ -522,6 +522,8 @@ export default function TestBuilder() {
         setCommentTemplate={setJiraCommentTemplate}
         health={jiraHealth}
         onRefreshHealth={refreshJiraHealth}
+        createdBy={createdBy}
+        setCreatedBy={setCreatedBy}
       />
 
       {/* Cost estimate spans full width below — needs the room */}

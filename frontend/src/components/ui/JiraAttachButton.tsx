@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import { ExternalLink, Paperclip, Loader2, CheckCircle2, AlertTriangle, FileDown, RefreshCw, Send, MessageSquare, X } from "lucide-react";
 import toast from "react-hot-toast";
 import { api } from "../../lib/api";
+import { JiraIssuePreview } from "./JiraIssuePreview";
 
 type Attachment = {
   id: number;
@@ -197,6 +198,15 @@ export function JiraAttachButton({
           </button>
         </div>
       </div>
+
+      {/* Live Jira details for the run's linked ticket — assignee + status
+          + summary, fetched from /api/jira/issue/:key. Hides itself if the
+          run has no jiraID or the integration isn't healthy. */}
+      {jiraID && health.ok && (
+        <div className="mt-4">
+          <JiraIssuePreview jiraID={jiraID} enabled={true} />
+        </div>
+      )}
 
       {/* Attach history */}
       {attachments.length > 0 && (

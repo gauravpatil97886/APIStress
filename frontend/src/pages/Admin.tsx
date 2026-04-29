@@ -1006,7 +1006,13 @@ function KpiCard({ icon: Icon, label, value, tone, hint }: any) {
       </div>
       <div className="min-w-0">
         <div className="text-[10px] uppercase tracking-[0.16em] text-ink-muted font-semibold">{label}</div>
-        <div className="text-2xl font-bold tabular-nums leading-tight">{Number(value).toLocaleString()}</div>
+        <div className="text-2xl font-bold tabular-nums leading-tight">
+          {typeof value === "number"
+            ? value.toLocaleString()
+            : (typeof value === "string" && /^\d+$/.test(value))
+              ? Number(value).toLocaleString()
+              : value /* preserve pre-formatted strings like "100%" */}
+        </div>
         {hint && <div className="text-[10px] text-ink-dim mt-0.5">{hint}</div>}
       </div>
     </div>
@@ -1095,13 +1101,30 @@ function JiraTab() {
       toast.error(e?.message || "Failed to load Jira data", { id: "jira-tab-error" });
     } finally { setLoading(false); }
   }
+  // Initial load — fires every time the tab mounts (admin tabs are
+  // conditionally rendered, so navigating to Jira always remounts and
+  // triggers this).
   useEffect(() => { load(); }, []);
+  // Auto-refresh interval — defaults to ON.
   useEffect(() => {
     if (!autoRefresh) return;
     const t = setInterval(load, 15_000);
     return () => clearInterval(t);
     // eslint-disable-next-line
   }, [autoRefresh]);
+  // Refresh whenever the browser tab regains focus or the document becomes
+  // visible — handles "I left this page open in another tab and came back".
+  useEffect(() => {
+    const onFocus = () => load();
+    const onVisible = () => { if (document.visibilityState === "visible") load(); };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+    // eslint-disable-next-line
+  }, []);
 
   // ── Rollups ──────────────────────────────────────────────────────────
   const total = successes.length + errors.length;
@@ -1131,42 +1154,40 @@ function JiraTab() {
     <div className="space-y-4">
       {/* ── Header card with the Jira mark + connection status ───────── */}
       <div className="card p-0 ring-1 ring-bg-border overflow-hidden">
-        <div className="flex items-center gap-4 p-5 bg-gradient-to-r from-[#0052CC]/15 via-[#2684FF]/10 to-transparent border-b border-bg-border">
+        <div className="flex items-start gap-4 p-5 bg-gradient-to-r from-[#0052CC]/15 via-[#2684FF]/10 to-transparent border-b border-bg-border flex-wrap">
           <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#0052CC] to-[#2684FF] grid place-items-center shrink-0 shadow-lg shadow-[#0052CC]/40">
             <svg viewBox="0 0 24 24" className="w-7 h-7 text-white" fill="currentColor" aria-hidden>
               <path d="M11.53 2L2 11.53a.6.6 0 000 .85l9.53 9.54a.6.6 0 00.85 0l4.84-4.84-3.42-3.41a4.18 4.18 0 010-5.93L11.53 2z"/>
             </svg>
           </div>
-          <div className="leading-tight">
+          <div className="leading-tight min-w-0 flex-1">
             <div className="text-lg font-bold tracking-tight">Jira integration</div>
-            <div className="text-xs text-ink-muted">
+            <div className="text-xs text-ink-muted truncate">
               {health?.base_url
                 ? <>Endpoint: <a href={health.base_url} target="_blank" rel="noopener" className="text-[#9bbcff] hover:underline font-mono">{health.base_url}</a></>
                 : "Not configured"}
             </div>
+            {health?.configured && (
+              <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                <span className="pill ring-1 ring-bg-border bg-bg-card text-[9px] font-mono uppercase tracking-wider text-ink-muted">
+                  {health.auth_kind === "cloud_basic" ? "Cloud · Basic auth" :
+                   health.auth_kind === "server_pat"  ? "Server · PAT"
+                                                      : (health.auth_kind || "auth")}
+                </span>
+                {health.project && (
+                  <span className="pill ring-1 ring-[#2684FF]/30 bg-[#2684FF]/10 text-[#9bbcff] text-[9px] font-mono uppercase tracking-wider">
+                    project lock: {health.project}-*
+                  </span>
+                )}
+                {health.timezone && (
+                  <span className="pill ring-1 ring-bg-border bg-bg-card text-[9px] font-mono text-ink-dim">
+                    {health.timezone}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
-          <div className="flex-1" />
-          {health?.configured && health?.ok ? (
-            <div className="pill ring-1 text-xs bg-good/15 text-good ring-good/40 inline-flex items-center gap-2 px-3 py-1.5">
-              <ShieldCheck className="w-4 h-4" />
-              <div className="flex flex-col leading-tight">
-                <span className="font-bold">Connected</span>
-                {health.account && <span className="text-[10px] text-good/80 font-medium">as {health.account}</span>}
-              </div>
-            </div>
-          ) : health?.configured ? (
-            <div className="pill ring-1 text-xs bg-bad/15 text-bad ring-bad/40 inline-flex items-center gap-2 px-3 py-1.5">
-              <AlertCircle className="w-4 h-4" />
-              <div className="flex flex-col leading-tight">
-                <span className="font-bold">Health check failed</span>
-                <span className="text-[10px] text-bad/80 font-mono truncate max-w-[260px]" title={health.error}>{health.error || "—"}</span>
-              </div>
-            </div>
-          ) : (
-            <div className="pill ring-1 text-xs bg-warn/15 text-warn ring-warn/40 inline-flex items-center gap-2 px-3 py-1.5">
-              <AlertTriangleIcon /> Not configured
-            </div>
-          )}
+          <ConnectedAsCard health={health} onRefresh={load} />
         </div>
 
         {/* KPIs row */}
@@ -1379,5 +1400,97 @@ function AlertTriangleIcon() {
       <line x1="12" y1="9" x2="12" y2="13"/>
       <line x1="12" y1="17" x2="12.01" y2="17"/>
     </svg>
+  );
+}
+
+// ConnectedAsCard — prominent "who is connected to Jira" card. Renders the
+// service account's avatar + name + email, plus the active state. Used in
+// the JiraTab header. Replaces the old single-line "Connected · Name" pill
+// with something the admin can actually verify at a glance.
+function ConnectedAsCard({ health, onRefresh }: { health: any; onRefresh: () => void }) {
+  if (!health) {
+    return (
+      <div className="pill ring-1 text-xs bg-bg-card ring-bg-border text-ink-muted inline-flex items-center gap-2 px-3 py-2">
+        <RefreshCw className="w-3.5 h-3.5 animate-spin" /> probing…
+      </div>
+    );
+  }
+  if (!health.configured) {
+    return (
+      <div className="pill ring-1 text-xs bg-warn/15 text-warn ring-warn/40 inline-flex items-center gap-2 px-3 py-2">
+        <AlertCircle className="w-4 h-4" />
+        <div className="flex flex-col leading-tight">
+          <span className="font-bold">Not configured</span>
+          <span className="text-[10px] text-warn/80">Set CH_JIRA_* in .env, restart</span>
+        </div>
+      </div>
+    );
+  }
+  if (!health.ok) {
+    return (
+      <button
+        onClick={onRefresh}
+        className="pill ring-1 text-xs bg-bad/15 text-bad ring-bad/40 inline-flex items-center gap-2 px-3 py-2 hover:bg-bad/25"
+        title="Click to re-probe"
+      >
+        <AlertCircle className="w-4 h-4" />
+        <div className="flex flex-col leading-tight items-start">
+          <span className="font-bold">Health check failed</span>
+          <span className="text-[10px] text-bad/80 font-mono truncate max-w-[260px]" title={health.error}>{health.error || "—"}</span>
+        </div>
+      </button>
+    );
+  }
+
+  // Healthy — render the full profile card.
+  const initials = (health.account || "?").split(/\s+/).filter(Boolean)
+    .map((s: string) => s[0]).slice(0, 2).join("").toUpperCase();
+  const inactive = health.active === false;
+  return (
+    <div className="rounded-xl ring-1 ring-good/30 bg-good/[.06] p-3 flex items-center gap-3 min-w-[260px]">
+      {/* Avatar (or initials fallback) */}
+      {health.avatar ? (
+        <img
+          src={health.avatar}
+          alt={health.account || "Jira service account"}
+          className="w-11 h-11 rounded-full ring-2 ring-good/40 shrink-0"
+          referrerPolicy="no-referrer"
+        />
+      ) : (
+        <div className="w-11 h-11 rounded-full bg-gradient-to-br from-[#0052CC] to-[#2684FF] grid place-items-center text-white font-bold shrink-0 ring-2 ring-good/40">
+          {initials || "?"}
+        </div>
+      )}
+      <div className="leading-tight min-w-0">
+        <div className="text-[9px] uppercase tracking-[0.16em] text-good/80 font-mono flex items-center gap-1">
+          <ShieldCheck className="w-3 h-3" /> Connected as
+        </div>
+        <div className="text-sm font-bold text-ink truncate" title={health.account}>
+          {health.account || "—"}
+          {inactive && (
+            <span className="pill ring-1 text-[9px] bg-warn/15 text-warn ring-warn/30 ml-1.5 uppercase tracking-wider">
+              inactive
+            </span>
+          )}
+        </div>
+        {health.email && (
+          <div className="text-[11px] text-ink-muted truncate font-mono" title={health.email}>
+            {health.email}
+          </div>
+        )}
+        {health.account_id && (
+          <div className="text-[10px] text-ink-dim truncate font-mono" title={`accountId: ${health.account_id}`}>
+            id: {health.account_id.slice(0, 18)}{health.account_id.length > 18 ? "…" : ""}
+          </div>
+        )}
+        <button
+          onClick={onRefresh}
+          className="mt-1 inline-flex items-center gap-1 text-[10px] text-good/80 hover:text-good"
+          title="Re-probe Jira"
+        >
+          <RefreshCw className="w-2.5 h-2.5" /> verify
+        </button>
+      </div>
+    </div>
   );
 }

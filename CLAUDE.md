@@ -48,11 +48,13 @@ Docker now uses BuildKit cache mounts, non-root runtime user on the backend, hea
 
 ## Architecture in 60 seconds
 
-- **Engine** (`backend/internal/engine`): a `Runner` orchestrates a goroutine pool of virtual users that hammer a target. A `Scheduler` computes the desired VU count over time (constant / ramp / spike / stages). A `Batcher` drains per-request results, feeds an HDR-histogram-backed `Collector`, and emits a `SecondBucket` once per second.
-- **Persistence**: Postgres stores tests, runs, per-second metric snapshots, environments, PostWomen workspaces/collections/requests/history, teams, team_keys, team_members, and admin_audit. Schemas live in `backend/internal/storage/migrations/{001_init,002_postwomen,003_teams}.sql` and are applied on boot in order.
-- **Live metrics**: The API exposes SSE at `/api/runs/:id/live`. The frontend's `useLiveMetrics` hook subscribes via `EventSource`. SSE auth is now team-scoped (uses `TeamAuth`, accepts `?key=` param so EventSource can reach it).
+- **Engine** (`backend/internal/engine`): a `Runner` orchestrates a goroutine pool of virtual users that hammer a target. A `Scheduler` computes the desired VU count over time (constant / ramp / spike / stages). A `Batcher` drains per-request results, feeds an HDR-histogram-backed `Collector`, and emits a `SecondBucket` once per second. The manager exposes a **`SetFinishHook`** that fires once per run terminal state — used by the Jira auto-attach feature.
+- **Persistence**: Postgres stores tests, runs, per-second metric snapshots, environments, PostWomen workspaces/collections/requests/history, teams, team_keys, team_members, admin_audit, **activity_log** (cross-tool events) and **jira_attachments** (paper trail of every report sent to Jira). Schemas live in `backend/internal/storage/migrations/00{1..5}_*.sql` and are applied on boot in order.
+- **Live metrics**: The API exposes SSE at `/api/runs/:id/live`. The frontend's `useLiveMetrics` hook subscribes via `EventSource`. SSE auth is team-scoped (uses `TeamAuth`, accepts `?key=` so EventSource can reach it).
 - **Auth model — multi-tenant**: every request goes through `middleware.TeamAuth` which bcrypt-validates the access key, looks up the owning team, and stashes `team_id`/`team_name` into the gin context. Every read/write handler filters by `team_id`. No row leakage across teams.
-- **Admin**: `/api/admin/*` is gated by a separate `CH_ADMIN_KEY` (header `X-Admin-Key`). Admins can list / create / rename / delete / disable teams, rotate access keys, and toggle each team's `tools_access` (apistress, postwomen, or both). `admin_audit` records every mutation.
+- **Admin**: `/api/admin/*` is gated by a separate `CH_ADMIN_KEY` (header `X-Admin-Key`). Admins can list / create / rename / delete / disable teams, rotate access keys, toggle each team's `tools_access`, and view a 4-tab dashboard: **Teams**, **Activity** (cross-tool events with charts and filters), **Jira** (success/error feeds + per-team usage), **Audit** (admin-mutation history). `admin_audit` records every admin mutation.
+- **Activity tracking**: an `internal/activity.Service` is the unified event sink. Backend emits events for `auth.login` / `auth.login_failed` / `feature.run.start|stop` / `feature.jira.attach|error` / `admin.action`. Frontend posts client-side events (`auth.logout`, `tool.open`, `feature.crosswalk.{join,export}`, etc.) to `POST /api/activity` — backend trusts the team_id from auth context, never the body, and validates against an allow-list. All inserts are best-effort (logged on error, never bubbled up to user requests).
+- **Jira integration** (`internal/jira` + `internal/api/handlers/jira.go`): env-driven (`CH_JIRA_BASE_URL`, `CH_JIRA_AUTH_KIND`, `CH_JIRA_EMAIL`, `CH_JIRA_API_TOKEN`, `CH_JIRA_PROJECT_KEY`). Supports both Atlassian Cloud (Basic auth `email:token`) and Server/Data Center (Bearer PAT). Operations: health probe (`/api/jira/health`), live issue lookup with assignee + avatar (`/api/jira/issue/:key`), attach run report (`/api/runs/:id/attach-jira`), list past attachments (`/api/runs/:id/jira-attachments`). Auto-attach hook on `Manager` finish-event uploads PDF + posts a wiki-formatted comment that mentions the issue's assignee. All paths logged to `jira_attachments` + `activity_log`.
 - **Reports**: HTML rendered from a Go `html/template`, PDF generated server-side with `gofpdf` (no headless Chrome). Both include the operator's name and Jira link.
 - **Logging**: zap logger with daily file rotation in `backend/logs/choicehammer-YYYY-MM-DD.log` plus a colourised stdout stream.
 
@@ -68,7 +70,20 @@ Every load run captures `created_by`, `jira_id`, and `jira_link`. The frontend f
 
 ## PostWomen Runner
 
-Inside PostWomen, the **Runner** tab takes a saved request + a CSV / TSV / JSON / XLSX dataset and iterates the request once per row, substituting `{{column}}` placeholders into the URL, headers, query, and body. Beyond what Postman's runner does: parallel concurrency (1–10), built-in `{{$macro}}` helpers (`uuid`, `now`, `randomEmail`, `randomInt:lo-hi`, …), in-app spreadsheet viewer with column / row toggles, retry-failed-only, and CSV export of results. Implementation is frontend-only; each iteration calls the existing team-scoped `/api/postwomen/send`.
+Inside PostWomen, the **Runner** tab takes a saved request + a CSV / TSV / JSON / XLSX dataset and iterates the request once per row, substituting `{{column}}` placeholders into the URL, headers, query, and body. Beyond what Postman's runner does: parallel concurrency (1–10), built-in `{{$macro}}` helpers (`uuid`, `now`, `randomEmail`, `randomInt:lo-hi`, …), in-app spreadsheet viewer with column / row toggles, retry-failed-only, and CSV export of results. Implementation is frontend-only; each iteration calls the existing team-scoped `/api/postwomen/send`. Big-file safe: parsing runs in a Web Worker, results table is virtualised, run state is throttled-flushed every 250 ms.
+
+## Crosswalk
+
+Excel-themed VLOOKUP / data-join tool. Upload a primary + lookup file, pick join columns, splice columns from one into the other. CSVs are parsed via `File.stream()` line-by-line in a dedicated worker (`crosswalk.worker.ts`) — realistic ceiling ~10 GB. XLSX uses SheetJS in-memory; capped at 5 M rows / file. The hash-index join is O(n+m), result preview is virtualised, exports to CSV or XLSX. Frontend-only; no backend storage.
+
+## Jira integration
+
+The "Attach to Jira" feature lives in three places:
+- **TestBuilder** — auto-attach toggle (defaults OFF every visit), live issue preview as the user types, three comment templates (Detailed / Brief / Critical).
+- **Report detail** — `JiraAttachButton` with attach-history strip; per-row "Resend" + custom comment override.
+- **History list** — `JiraSendButton` per row, opens a portal modal so it works inside any table cell.
+
+The auto-attach finish hook (`cmd/server/main.go::autoAttachOnFinish`) re-renders the PDF and posts a wiki-formatted summary comment that mentions the issue's assignee using `[~accountid:xxx]` (Cloud) or `[~name]` (Server). Every success and failure is recorded in `activity_log` (`feature.jira.attach` / `feature.jira.error`) so the admin's **Jira tab** can show a connection-status header, KPIs (success rate, totals), per-team usage bars, most-attached issues, and a green / red split feed of the last 100 events.
 
 ## Conventions
 

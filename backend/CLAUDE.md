@@ -1,6 +1,6 @@
 # Choice Techlab — Backend
 
-Go service with two binaries: an API/engine server and a `hammer` CLI. Powers both APIStress (load testing) and PostWomen (API client), behind shared team-scoped auth.
+Go service with two binaries: an API/engine server and a `hammer` CLI. Powers APIStress (load testing) + PostWomen (API client) + Crosswalk-flavoured endpoints, with a unified activity feed and Jira integration, all behind shared team-scoped auth.
 
 ## Run locally
 
@@ -27,32 +27,46 @@ Important env vars:
 - `CH_ADMIN_KEY`        — gate for `/api/admin/*` (default `97886` in dev)
 - `CH_LOG_DIR` / `CH_LOG_LEVEL` / `CH_LOG_PRETTY`
 - `CH_MAX_VUS`
+- **Jira**: `CH_JIRA_BASE_URL`, `CH_JIRA_AUTH_KIND` (`cloud_basic` | `server_pat`), `CH_JIRA_EMAIL` (Cloud only), `CH_JIRA_API_TOKEN`, `CH_JIRA_PROJECT_KEY` (optional project lock)
+   - Cloud: `CH_JIRA_AUTH_KIND=cloud_basic` + email + API token; backend sends `Basic base64(email:token)`.
+   - Server / Data Center: `CH_JIRA_AUTH_KIND=server_pat` + PAT only; backend sends `Bearer <pat>`.
+   - Leave any of these blank → integration disables itself; `/api/jira/health` returns `{configured:false}` and the UI hides Jira controls.
 
 ## Layout
 
 ```
 backend/
 ├── cmd/
-│   ├── server/           # HTTP API + engine + bootstrap teams
+│   ├── server/           # HTTP API + engine + bootstrap teams + auto-attach hook
 │   └── hammer/           # CLI: hammer run --curl … --by … --jira CT-123
 ├── internal/
-│   ├── engine/           # Runner, VU, Scheduler, Batcher, Pool, Manager
+│   ├── engine/           # Runner, VU, Scheduler, Batcher, Pool, Manager (FinishHook)
 │   ├── protocols/        # http.go, websocket.go (each implements engine.Executor)
 │   ├── metrics/          # HDR histogram, Collector, snapshots
 │   ├── curl/             # `curl …` → engine.HTTPRequest
 │   ├── report/           # HTML template + gofpdf PDF + sparkline SVG
 │   ├── teams/            # Team + key persistence, bcrypt auth, admin ops, audit
+│   ├── tools/            # Canonical tool slug registry — single source for tools_access
+│   ├── activity/         # Cross-tool event sink + admin queries (List, Stats)
+│   ├── jira/             # Tiny Jira REST client: Health, GetIssue, Attach, Comment
 │   ├── postwomen/        # PostWomen models + Postman import/export + Send()
 │   ├── api/
 │   │   ├── router.go
 │   │   ├── handlers/     # auth, tests, runs, live (SSE), reports, environments,
-│   │   │                 # compare, cost, postwomen/, admin/
+│   │   │                 # compare, cost, activity, jira, postwomen/, admin/
 │   │   └── middleware/   # TeamAuth, KeyAuth (legacy), CORS, RequestLogger, Recovery
-│   ├── storage/          # pgx pool + migrations 001..003 (applied on boot, in order)
+│   ├── storage/          # pgx pool + migrations 001..005 (applied on boot, in order)
 │   ├── logger/           # zap with daily-rotating file in /logs
 │   └── config/
 └── logs/                 # daily-rotating json log files (created at runtime)
 ```
+
+Migrations:
+- `001_init.sql` — engine + reports core schema.
+- `002_postwomen.sql` — PostWomen workspaces / collections / requests / history.
+- `003_teams.sql` — teams, team_keys, team_members, admin_audit + `team_id` on every user-data table.
+- `004_activity.sql` — `activity_log` with team / event / tool / ts indexes.
+- `005_jira.sql` — `jira_attachments` paper-trail.
 
 ## Engine flow
 
@@ -83,7 +97,38 @@ backend/
 
 ## Admin
 
-`/api/admin/*` is a separate auth scope using `CH_ADMIN_KEY` (header `X-Admin-Key`). Endpoints: list/create/rename/delete/disable teams, rotate keys, set `tools_access`, view `admin_audit`. The plaintext key is shown to the admin **once** at create/rotate time; only the bcrypt hash is stored. Every mutation is audited.
+`/api/admin/*` is a separate auth scope using `CH_ADMIN_KEY` (header `X-Admin-Key`). Endpoints:
+- Teams CRUD, key rotation, set `tools_access` (validated against `tools.AllSlugs`).
+- `/api/admin/audit` — admin mutation history.
+- `/api/admin/activity` + `/api/admin/activity/stats` — cross-tool event feed + 7-day rollups (tool adoption, top teams, hourly timeline). Filters: `team_id`, `tool`, `event`, `q`, `since`, `until`, `limit`, `offset`.
+- `/api/admin/jira/health` — same probe as the user endpoint (returns avatar / displayName / email / accountId / timezone) so the admin's Jira tab can show "Connected as <profile card>".
+
+The plaintext team key is shown to the admin **once** at create/rotate time; only the bcrypt hash is stored. Every mutation is mirrored from `admin_audit` into `activity_log` as `admin.action` so the cross-tool activity feed shows admin events too.
+
+## Activity tracking
+
+`internal/activity` is the unified event sink. Use `Service.Log(ctx, Event{...})` from anywhere — never blocks, errors are logged but never returned. Common event types live as constants in the package (`EventLogin`, `EventRunStart`, `EventPwSend`, `EventCrosswalkJoin`, …). Frontend posts client-side events via `POST /api/activity` against an allow-list (`auth.logout`, `tool.open`, `feature.crosswalk.{join,export}`, `feature.runner.{start,export}`, `feature.pw.export`, `feature.jira.attach`); the backend trusts only the `team_id` from auth context, never the body.
+
+## Jira integration
+
+`internal/jira` is a 200-line REST client. Two auth modes:
+- `cloud_basic` — Atlassian Cloud, `Authorization: Basic base64(email:token)`.
+- `server_pat`  — Self-hosted, `Authorization: Bearer <pat>`.
+
+Surface:
+- `Health(ctx)` — `GET /rest/api/2/myself` returning displayName / email / avatar / accountId.
+- `GetIssue(ctx, key)` — fetches summary + assignee (with `[~accountid:…]` mention token for Cloud, `[~name]` for Server) + status + priority.
+- `Attach(ctx, key, filename, content, mime)` — multipart upload with `X-Atlassian-Token: no-check`.
+- `Comment(ctx, key, body)` — wiki-markup comment.
+- `ValidateProject(key)` — enforces `CH_JIRA_PROJECT_KEY` if set.
+
+Endpoints (`internal/api/handlers/jira.go`):
+- `GET /api/jira/health` — frontend badge.
+- `GET /api/jira/issue/:key` — live preview while typing.
+- `POST /api/runs/:id/attach-jira` — manual attach.
+- `GET /api/runs/:id/jira-attachments` — per-run history.
+
+Auto-attach hook (`cmd/server/main.go::autoAttachOnFinish`) registered via `Manager.SetFinishHook` runs after every terminal run. When `RunMeta.AutoAttachJira` is true, it re-renders the PDF, attaches it, and posts an assignee-mentioning wiki-formatted comment built by `BuildJiraSummaryComment`. Failures are logged to `activity_log` as `feature.jira.error` with `meta.reason` + `meta.error` so the admin Jira tab can surface them.
 
 ## Logging
 
