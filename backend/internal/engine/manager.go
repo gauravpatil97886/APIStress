@@ -20,6 +20,7 @@ type LiveSubscriber chan metrics.SecondBucket
 
 type ManagedRun struct {
 	ID        string
+	TeamID    string
 	Cfg       *TestConfig
 	Runner    *Runner
 	Status    RunStatus
@@ -95,7 +96,7 @@ type RunMeta struct {
 	CostInputs map[string]interface{} `json:"cost_inputs"` // raw cost.Inputs as JSON
 }
 
-func (m *Manager) Start(ctx context.Context, cfg *TestConfig, testID string, meta RunMeta) (*ManagedRun, error) {
+func (m *Manager) Start(ctx context.Context, cfg *TestConfig, testID string, meta RunMeta, teamID string) (*ManagedRun, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -106,14 +107,18 @@ func (m *Manager) Start(ctx context.Context, cfg *TestConfig, testID string, met
 	if testID != "" {
 		testIDArg = testID
 	}
+	var teamArg interface{}
+	if teamID != "" {
+		teamArg = teamID
+	}
 	costInputsJSON, _ := json.Marshal(meta.CostInputs)
 	if string(costInputsJSON) == "null" {
 		costInputsJSON = []byte("{}")
 	}
 	_, err := m.pool.Exec(ctx,
-		`INSERT INTO runs (id, test_id, name, config, status, started_at, created_by, jira_id, jira_link, notes, env_tag, cost_inputs)
-		 VALUES ($1, $2, $3, $4, 'running', NOW(), $5, $6, $7, $8, $9, $10)`,
-		id, testIDArg, cfg.Name, cfgJSON, meta.CreatedBy, meta.JiraID, meta.JiraLink, meta.Notes, meta.EnvTag, costInputsJSON,
+		`INSERT INTO runs (id, test_id, name, config, status, started_at, created_by, jira_id, jira_link, notes, env_tag, cost_inputs, team_id)
+		 VALUES ($1, $2, $3, $4, 'running', NOW(), $5, $6, $7, $8, $9, $10, $11)`,
+		id, testIDArg, cfg.Name, cfgJSON, meta.CreatedBy, meta.JiraID, meta.JiraLink, meta.Notes, meta.EnvTag, costInputsJSON, teamArg,
 	)
 	if err != nil {
 		logger.Error("failed to insert run", zap.String("run_id", id), zap.Error(err))
@@ -139,6 +144,7 @@ func (m *Manager) Start(ctx context.Context, cfg *TestConfig, testID string, met
 
 	mr := &ManagedRun{
 		ID:        id,
+		TeamID:    teamID,
 		Cfg:       cfg,
 		Runner:    runner,
 		Status:    RunRunning,

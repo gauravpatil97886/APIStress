@@ -1,15 +1,15 @@
-# APIStress
+# Choice Techlab Toolkit
 
-> Hit your APIs hard. Know exactly what breaks.
+> Internal multi-tool platform: **APIStress** (load testing) + **PostWomen** (Postman-style API client) behind a shared team-scoped auth/admin layer.
 
-Open-source load-testing tool. Go (Gin) backend, React 18 frontend, PostgreSQL for storage, optional `hammer` CLI.
+Go (Gin) backend, React 18 frontend, PostgreSQL for storage, optional `hammer` CLI.
 
 ## Repo layout
 
 ```
 choicehammer/
-├── backend/          # Go service (engine + API + CLI)
-├── frontend/         # React 18 + Vite + Tailwind dashboard
+├── backend/          # Go service (engine + API + CLI + admin + teams)
+├── frontend/         # React 18 + Vite + Tailwind — APIStress + PostWomen + Admin
 ├── docker-compose.yml
 ├── Makefile
 ├── .env              # local dev env (dummy creds, safe to commit *for this internal tool*)
@@ -21,33 +21,48 @@ Each side has its own `CLAUDE.md` with deeper context.
 ## Quick start
 
 ```bash
-# 1. Postgres + backend + frontend, all in Docker
+# 1. Postgres + backend + frontend, all in Docker (with healthchecks)
 docker compose up --build
 
 # 2. Open http://localhost:5173
-#    Access key (default):  choicehammer-dev-key
+#    Default access key:   choicehammer-dev-key   → "Legacy" team
+#    Default admin key:    97886                  → /admin console
 
 # 3. Or run pieces locally:
-make backend     # backend on :8080
+make backend     # backend on :8080 (or CH_HTTP_ADDR=:8088 for dev)
 make frontend    # frontend on :5173
 make cli         # builds ./bin/hammer
 ```
 
+Docker now uses BuildKit cache mounts, non-root runtime user on the backend, healthchecks on every service, and `VITE_API_URL` is passed as a Docker build arg (Vite bakes it at build time, so runtime env vars don't help).
+
 ## Architecture in 60 seconds
 
 - **Engine** (`backend/internal/engine`): a `Runner` orchestrates a goroutine pool of virtual users that hammer a target. A `Scheduler` computes the desired VU count over time (constant / ramp / spike / stages). A `Batcher` drains per-request results, feeds an HDR-histogram-backed `Collector`, and emits a `SecondBucket` once per second.
-- **Persistence**: Postgres stores tests, runs, per-second metric snapshots, environments. Schema lives in `backend/internal/storage/migrations/001_init.sql` and is applied on boot.
-- **Live metrics**: The API exposes SSE at `/api/runs/:id/live`. The frontend's `useLiveMetrics` hook subscribes via `EventSource`.
-- **Auth**: Single shared access key. The frontend posts the key to `/api/auth/login`; on success it stores the key in `localStorage` and sends it as `X-Access-Key` on every request. SSE uses the `?key=` query param so EventSource works.
-- **Reports**: HTML rendered from a Go `html/template`, PDF generated server-side with `gofpdf` (no headless Chrome needed). Both include the operator's name and Jira link.
-- **Logging**: zap logger with daily file rotation in `backend/logs/choicehammer-YYYY-MM-DD.log` plus a colourised stdout stream. Every component (engine, manager, storage, http) logs structured events.
+- **Persistence**: Postgres stores tests, runs, per-second metric snapshots, environments, PostWomen workspaces/collections/requests/history, teams, team_keys, team_members, and admin_audit. Schemas live in `backend/internal/storage/migrations/{001_init,002_postwomen,003_teams}.sql` and are applied on boot in order.
+- **Live metrics**: The API exposes SSE at `/api/runs/:id/live`. The frontend's `useLiveMetrics` hook subscribes via `EventSource`. SSE auth is now team-scoped (uses `TeamAuth`, accepts `?key=` param so EventSource can reach it).
+- **Auth model — multi-tenant**: every request goes through `middleware.TeamAuth` which bcrypt-validates the access key, looks up the owning team, and stashes `team_id`/`team_name` into the gin context. Every read/write handler filters by `team_id`. No row leakage across teams.
+- **Admin**: `/api/admin/*` is gated by a separate `CH_ADMIN_KEY` (header `X-Admin-Key`). Admins can list / create / rename / delete / disable teams, rotate access keys, and toggle each team's `tools_access` (apistress, postwomen, or both). `admin_audit` records every mutation.
+- **Reports**: HTML rendered from a Go `html/template`, PDF generated server-side with `gofpdf` (no headless Chrome). Both include the operator's name and Jira link.
+- **Logging**: zap logger with daily file rotation in `backend/logs/choicehammer-YYYY-MM-DD.log` plus a colourised stdout stream.
+
+## Multi-tenancy
+
+- Every user-data table (`runs`, `tests`, `environments`, `pw_workspaces`, `pw_history`) has a nullable `team_id UUID REFERENCES teams(id)`. Pre-multitenant rows are backfilled to the auto-created **Legacy** team during boot bootstrap.
+- PostWomen `pw_collections` and `pw_requests` are scoped *transitively* through their workspace's `team_id`; handlers do an ownership-by-workspace check before any read/update/delete.
+- Login response includes `tools_access`. Frontend uses it to gate UI: `AppShell`, `ModePicker`, and `PostWomen` redirect away when a team lacks the relevant tool. Single-tool teams bypass the mode picker entirely.
 
 ## Required attribution on every run
 
-Every run captures `created_by`, `jira_id`, and `jira_link`. The frontend forces these in the test builder; the API rejects starts without them. They appear at the top of every PDF/HTML report so reviewers can trace any run back to a person and a ticket.
+Every load run captures `created_by`, `jira_id`, and `jira_link`. The frontend forces these in the test builder; the API rejects starts without them. They appear at the top of every PDF/HTML report.
+
+## PostWomen Runner
+
+Inside PostWomen, the **Runner** tab takes a saved request + a CSV / TSV / JSON / XLSX dataset and iterates the request once per row, substituting `{{column}}` placeholders into the URL, headers, query, and body. Beyond what Postman's runner does: parallel concurrency (1–10), built-in `{{$macro}}` helpers (`uuid`, `now`, `randomEmail`, `randomInt:lo-hi`, …), in-app spreadsheet viewer with column / row toggles, retry-failed-only, and CSV export of results. Implementation is frontend-only; each iteration calls the existing team-scoped `/api/postwomen/send`.
 
 ## Conventions
 
 - **Time**: per-second buckets are the unit of truth for charts. Internally we record latency in **microseconds** (HDR histogram), display in **milliseconds**.
-- **Backwards compat**: this is an internal tool. Break schemas freely; bump `001_init.sql` or add `002_*.sql` and rebuild.
+- **Backwards compat**: this is an internal tool. Break schemas freely; add `00N_*.sql` migration files and rebuild.
 - **Tests**: not yet present. When adding, prefer integration tests against a real Postgres in Docker.
+- **Team scoping is non-negotiable**: any new handler that reads or writes user data MUST filter by `middleware.TeamID(c)`. The router puts these handlers behind the `protected` group (`r.Group("/api", middleware.TeamAuth(teamSvc))`).

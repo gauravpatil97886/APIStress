@@ -1,0 +1,29 @@
+# Repo / VCS / IDE
+.git
+.gitignore
+.idea
+.vscode
+*.swp
+
+# Build artifacts
+bin/
+out/
+dist/
+
+# Local logs / data
+logs/
+*.log
+
+# Test artifacts
+coverage.out
+*.test
+
+# Docker / compose (not needed in build context)
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Docs that don't change build behaviour
+README.md
+CLAUDE.md
+*.md

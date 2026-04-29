@@ -11,12 +11,14 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/choicetechlab/choicehammer/internal/activity"
 	"github.com/choicetechlab/choicehammer/internal/api"
 	"github.com/choicetechlab/choicehammer/internal/config"
 	"github.com/choicetechlab/choicehammer/internal/engine"
 	"github.com/choicetechlab/choicehammer/internal/logger"
 	"github.com/choicetechlab/choicehammer/internal/protocols"
 	"github.com/choicetechlab/choicehammer/internal/storage"
+	"github.com/choicetechlab/choicehammer/internal/teams"
 )
 
 func main() {
@@ -51,6 +53,15 @@ func main() {
 	}
 	defer db.Close()
 
+	// Teams service: validates access keys, manages teams + admin actions.
+	teamSvc := teams.New(db.Pool)
+	if err := teamSvc.Bootstrap(ctx, cfg.AccessKey); err != nil {
+		logger.Fatal("teams bootstrap failed", zap.Error(err))
+	}
+	logger.Info("teams bootstrap done — Legacy team ready")
+
+	activitySvc := activity.New(db.Pool)
+
 	mgr := engine.NewManager(db.Pool, func(c *engine.TestConfig) (engine.Executor, error) {
 		ex, err := protocols.New(c)
 		if err != nil {
@@ -59,7 +70,7 @@ func main() {
 		return ex, nil
 	})
 
-	r := api.New(cfg, db.Pool, mgr)
+	r := api.New(cfg, db.Pool, mgr, teamSvc, activitySvc)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

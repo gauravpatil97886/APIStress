@@ -3,13 +3,15 @@ import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   Send, Plus, Folder, FolderOpen, ChevronRight, ChevronDown,
-  Trash2, Upload, Download, Hammer, Home,
+  Trash2, Upload, Download, Hammer, Home, X, LogOut,
   Search, RefreshCw, Copy, Check, AlertCircle, Sparkles, Save, Terminal,
+  FileSpreadsheet,
 } from "lucide-react";
 import toast from "react-hot-toast";
-import { api } from "../../lib/api";
+import { api, getTeam, clearKey } from "../../lib/api";
 import { PWWordmark, PWLogo } from "../../components/postwomen/Logo";
 import { parseCurl, prettyJSON } from "../../lib/curl";
+import Runner from "./Runner";
 
 type Collection = {
   id: string;
@@ -79,13 +81,74 @@ function generateCurl(req: Request): string {
 
 export default function PostWomen() {
   const nav = useNavigate();
+  const team = getTeam();
+  const tools = team?.tools_access || ["apistress", "postwomen"];
+
+  // Gate: team without postwomen access can't be here.
+  useEffect(() => {
+    if (team && !tools.includes("postwomen")) {
+      toast.error(`"${team.name}" doesn't have access to PostWomen`, { id: "no-pw-access", duration: 5000 });
+      if (tools.includes("apistress")) nav("/", { replace: true });
+      else nav("/login", { replace: true });
+      return;
+    }
+    if (team) {
+      api.logActivity({ event_type: "tool.open", tool_slug: "postwomen", actor_name: team.name });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [workspaces, setWorkspaces] = useState<any[]>([]);
   const [activeWS, setActiveWS] = useState<string>("");
   const [collections, setCollections] = useState<Collection[]>([]);
   const [requests, setRequests] = useState<Request[]>([]);
-  const [activeReq, setActiveReq] = useState<Request | null>(null);
-  const [savedReq, setSavedReq] = useState<Request | null>(null); // last persisted snapshot
-  const [response, setResponse] = useState<any>(null);
+  // ── Multi-tab state ──────────────────────────────────────────
+  const [openTabs, setOpenTabs] = useState<Request[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  const [responses, setResponses] = useState<Record<string, any>>({});
+  const [savedSnaps, setSavedSnaps] = useState<Record<string, Request>>({});
+
+  const activeReq = useMemo(
+    () => openTabs.find((t) => t.id === activeTabId) ?? null,
+    [openTabs, activeTabId]
+  );
+  const savedReq = activeTabId ? savedSnaps[activeTabId] ?? null : null;
+  const response = activeTabId ? responses[activeTabId] ?? null : null;
+
+  // Mutator that target the active tab.
+  function setActiveReq(next: Request | null) {
+    if (!next) return;
+    setOpenTabs((prev) => prev.map((t) => (t.id === next.id ? next : t)));
+  }
+  function setResponse(r: any) {
+    if (!activeTabId) return;
+    setResponses((prev) => ({ ...prev, [activeTabId]: r }));
+  }
+  function setSavedReq(r: Request | null) {
+    if (!activeTabId || !r) return;
+    setSavedSnaps((prev) => ({ ...prev, [activeTabId]: r }));
+  }
+
+  // Open a tab (or focus an already-open one).
+  function openTab(r: Request) {
+    setOpenTabs((prev) => (prev.some((t) => t.id === r.id) ? prev : [...prev, r]));
+    setSavedSnaps((prev) => ({ ...prev, [r.id]: r }));
+    setActiveTabId(r.id);
+  }
+  function closeTab(id: string) {
+    setOpenTabs((prev) => {
+      const idx = prev.findIndex((t) => t.id === id);
+      const next = prev.filter((t) => t.id !== id);
+      if (id === activeTabId) {
+        const newActive = next[idx] || next[idx - 1] || null;
+        setActiveTabId(newActive?.id ?? null);
+      }
+      return next;
+    });
+    setResponses((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    setSavedSnaps((prev) => { const n = { ...prev }; delete n[id]; return n; });
+  }
+
   const [sending, setSending] = useState(false);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
@@ -93,9 +156,8 @@ export default function PostWomen() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [sidebarTab, setSidebarTab] = useState<"collections" | "history">("collections");
   const [history, setHistory] = useState<any[]>([]);
-  const [codeOpen, setCodeOpen] = useState(false);
+  const [mainView, setMainView] = useState<"request" | "runner">("request");
 
-  // Track dirty state by comparing current vs last-saved snapshot
   const isDirty = useMemo(() => {
     if (!activeReq || !savedReq) return false;
     return JSON.stringify(activeReq) !== JSON.stringify(savedReq);
@@ -143,7 +205,7 @@ export default function PostWomen() {
     toast.success("Duplicated");
     await reload();
     const fresh = (await api.pwTree(activeWS)).requests.find((x: any) => x.id === id);
-    if (fresh) openRequest(fresh);
+    if (fresh) openTab(fresh);
   }
 
   // ── Tree helpers ─────────────────────────────────────────────────
@@ -174,8 +236,23 @@ export default function PostWomen() {
     reload();
   }
   async function newRequest(collectionID?: string | null) {
+    // Requests without a collection don't surface in the tree (sidebar shows
+    // collection > requests). If the user has no collection yet, auto-create
+    // a "Drafts" one so the new request is visible immediately.
+    let coll = collectionID || null;
+    if (!coll) {
+      const existing = collections.find((c) => !c.parent_id);
+      if (existing) {
+        coll = existing.id;
+      } else {
+        const created = await api.pwCreateCollection({
+          workspace_id: activeWS, name: "Drafts", is_folder: false,
+        });
+        coll = created.id;
+      }
+    }
     const id = (await api.pwCreateRequest({
-      collection_id: collectionID || null,
+      collection_id: coll,
       name: "Untitled request",
       method: "GET",
       url: "",
@@ -186,19 +263,16 @@ export default function PostWomen() {
       auth: { kind: "none" },
     })).id;
     toast.success("Request created");
+    setOpenFolders((o) => coll ? { ...o, [coll]: true } : o);
     await reload();
-    const created = (await api.pwTree(activeWS)).requests.find((r: any) => r.id === id);
-    if (created) {
-      setActiveReq(created);
-      setSavedReq(created);
-    }
+    const tree = await api.pwTree(activeWS);
+    const fresh = tree.requests.find((r: any) => r.id === id);
+    if (fresh) openTab(fresh);
   }
 
-  // Open a request and seed the saved snapshot so dirty starts false.
+  // Open a request as a tab (or focus an already-open one).
   function openRequest(r: Request) {
-    setActiveReq(r);
-    setSavedReq(r);
-    setResponse(null);
+    openTab(r);
   }
 
   // Ref for the keyboard-shortcut handler so it stays stable across renders.
@@ -231,7 +305,7 @@ export default function PostWomen() {
   async function deleteRequest(id: string) {
     if (!confirm("Delete this request?")) return;
     await api.pwDeleteRequest(id);
-    if (activeReq?.id === id) setActiveReq(null);
+    closeTab(id);
     reload();
   }
   async function deleteCollection(id: string) {
@@ -352,6 +426,15 @@ export default function PostWomen() {
         </button>
         <div className="h-5 w-px bg-bg-border" />
         <PWWordmark size={18} />
+        {team && (
+          <>
+            <div className="h-5 w-px bg-bg-border ml-1" />
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full ring-1 ring-sky-500/30 bg-sky-500/10">
+              <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
+              <span className="text-xs font-bold text-sky-400">{team.name}</span>
+            </div>
+          </>
+        )}
         {workspaces.length > 0 && (
           <>
             <div className="h-5 w-px bg-bg-border ml-3" />
@@ -369,7 +452,8 @@ export default function PostWomen() {
                   return;
                 }
                 setActiveWS(e.target.value);
-                setActiveReq(null);
+                setOpenTabs([]);
+                setActiveTabId(null);
               }}
               className="input text-xs py-1 pr-7 max-w-[200px]"
               title="Workspace"
@@ -390,8 +474,32 @@ export default function PostWomen() {
         <button onClick={() => fileInputRef.current?.click()} className="btn-ghost text-xs">
           <Upload className="w-3.5 h-3.5" /> Import
         </button>
+        <button
+          onClick={() => setMainView(v => v === "runner" ? "request" : "runner")}
+          className={`text-xs inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg ring-1 transition
+            ${mainView === "runner"
+              ? "bg-sky-500/15 text-sky-300 ring-sky-500/40"
+              : "text-ink-muted ring-bg-border hover:text-ink hover:ring-sky-500/30"}`}
+          title="Data-driven runner (CSV / Excel / JSON)"
+        >
+          <FileSpreadsheet className="w-3.5 h-3.5" />
+          {mainView === "runner" ? "Exit runner" : "Runner"}
+        </button>
         <button onClick={() => nav("/")} className="btn-secondary text-xs" title="Open APIStress (load testing)">
           <Hammer className="w-3.5 h-3.5" /> Load test
+        </button>
+        <button
+          onClick={() => {
+            clearKey();
+            toast.success("Signed out");
+            nav("/login", { replace: true });
+          }}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs
+                     text-ink-muted ring-1 ring-bg-border bg-bg-card/40
+                     hover:text-bad hover:ring-bad/40 hover:bg-bad/[.06] transition"
+          title="Sign out"
+        >
+          <LogOut className="w-3.5 h-3.5" /> Sign out
         </button>
       </header>
 
@@ -465,16 +573,17 @@ export default function PostWomen() {
               onLoad={(h: any) => {
                 if (activeReq) {
                   setActiveReq({ ...activeReq, method: h.method, url: h.url });
-                  toast.success("URL/method loaded into current request");
+                  toast.success("URL/method loaded into current tab");
                 } else {
-                  setActiveReq({
+                  const ephemeral: Request = {
                     id: "history-" + Date.now(),
                     collection_id: null,
                     name: `${h.method} from history`,
                     method: h.method, url: h.url,
                     headers: {}, query: [], body_kind: "none", body: {}, auth: { kind: "none" },
                     position: 0,
-                  });
+                  };
+                  openTab(ephemeral);
                   toast.success("Loaded from history (unsaved)");
                 }
               }}
@@ -482,23 +591,45 @@ export default function PostWomen() {
           )}
         </aside>
 
-        {/* ── Centre + right: request editor + response ──────────── */}
-        <main className="flex-1 flex min-w-0">
-          {!activeReq ? (
-            <EmptyState onNew={() => newRequest(null)} onImport={() => fileInputRef.current?.click()} />
-          ) : (
-            <RequestPane
-              req={activeReq}
-              setReq={setActiveReq}
-              response={response}
-              sending={sending}
-              saving={saving}
-              dirty={isDirty}
-              onSend={sendRequest}
-              onSave={() => saveActive(false)}
-              onLoadTest={loadTestActive}
-              onApplyCurl={applyCurlToActive}
+        {/* ── Centre + right: request editor + response, OR runner ── */}
+        <main className="flex-1 flex flex-col min-w-0">
+          {mainView === "runner" ? (
+            <Runner
+              requests={requests}
+              initialReq={activeReq}
+              onExit={() => setMainView("request")}
             />
+          ) : (
+            <>
+              {/* Tab bar (Postman-style) — only when at least one tab is open */}
+              {openTabs.length > 0 && (
+                <TabBar
+                  tabs={openTabs}
+                  activeTabId={activeTabId}
+                  savedSnaps={savedSnaps}
+                  onPick={(id) => setActiveTabId(id)}
+                  onClose={closeTab}
+                  onNew={() => newRequest(null)}
+                />
+              )}
+
+              {!activeReq ? (
+                <EmptyState onNew={() => newRequest(null)} onImport={() => fileInputRef.current?.click()} />
+              ) : (
+                <RequestPane
+                  req={activeReq}
+                  setReq={setActiveReq}
+                  response={response}
+                  sending={sending}
+                  saving={saving}
+                  dirty={isDirty}
+                  onSend={sendRequest}
+                  onSave={() => saveActive(false)}
+                  onLoadTest={loadTestActive}
+                  onApplyCurl={applyCurlToActive}
+                />
+              )}
+            </>
           )}
         </main>
       </div>
@@ -1097,6 +1228,73 @@ function formatBytes(n: number): string {
 function copy(t: string) {
   navigator.clipboard.writeText(t);
   toast.success("Copied");
+}
+
+// ── Tab bar (Postman-style) ─────────────────────────────────────────────
+function TabBar({
+  tabs, activeTabId, savedSnaps, onPick, onClose, onNew,
+}: {
+  tabs: Request[];
+  activeTabId: string | null;
+  savedSnaps: Record<string, Request>;
+  onPick: (id: string) => void;
+  onClose: (id: string) => void;
+  onNew: () => void;
+}) {
+  return (
+    <div className="shrink-0 flex items-stretch h-9 border-b border-bg-border bg-bg-panel/30 overflow-x-auto">
+      {tabs.map((t) => {
+        const active = t.id === activeTabId;
+        const saved = savedSnaps[t.id];
+        const dirty = saved ? JSON.stringify(saved) !== JSON.stringify(t) : false;
+        return (
+          <motion.div
+            key={t.id}
+            layout
+            initial={{ opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.18 }}
+            className={`group relative flex items-center gap-2 px-3 border-r border-bg-border min-w-[160px] max-w-[260px] cursor-pointer transition
+              ${active
+                ? "bg-bg-panel/60 text-ink"
+                : "bg-transparent text-ink-muted hover:bg-white/[.03] hover:text-ink"}`}
+            onClick={() => onPick(t.id)}
+          >
+            <span className={`text-[9px] font-mono font-bold w-9 text-center px-1 py-0.5 rounded ring-1 shrink-0
+              ${METHOD_BG[t.method] || "bg-bg-card ring-bg-border"} ${METHOD_TONE[t.method] || ""}`}>
+              {t.method}
+            </span>
+            <span className="text-xs truncate flex-1 min-w-0">{t.name || "Untitled"}</span>
+            {dirty && (
+              <span className="w-1.5 h-1.5 rounded-full bg-warn animate-pulse shrink-0" title="Unsaved changes" />
+            )}
+            <button
+              onClick={(e) => { e.stopPropagation(); onClose(t.id); }}
+              className="opacity-0 group-hover:opacity-100 text-ink-muted hover:text-bad p-0.5 transition shrink-0"
+              title="Close tab"
+            >
+              <X className="w-3 h-3" />
+            </button>
+            {/* Active indicator stripe */}
+            {active && (
+              <motion.span
+                layoutId="active-tab-stripe"
+                className="absolute inset-x-0 bottom-0 h-0.5 bg-sky-400"
+              />
+            )}
+          </motion.div>
+        );
+      })}
+      {/* + new tab */}
+      <button
+        onClick={onNew}
+        className="w-9 grid place-items-center text-ink-muted hover:text-brand hover:bg-white/[.03] transition shrink-0"
+        title="New request (opens in a new tab)"
+      >
+        <Plus className="w-4 h-4" />
+      </button>
+    </div>
+  );
 }
 
 // ── History list ────────────────────────────────────────────────────────

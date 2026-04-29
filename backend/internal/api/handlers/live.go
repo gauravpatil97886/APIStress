@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/choicetechlab/choicehammer/internal/api/middleware"
 	"github.com/choicetechlab/choicehammer/internal/engine"
 	"github.com/choicetechlab/choicehammer/internal/logger"
 	"github.com/choicetechlab/choicehammer/internal/metrics"
@@ -25,6 +26,11 @@ func (h *LiveHandler) Stream(c *gin.Context) {
 	mr, ok := h.Manager.Get(id)
 	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "run not found or already finished"})
+		return
+	}
+	team := middleware.TeamID(c)
+	if team != "" && mr.TeamID != "" && mr.TeamID != team {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
 

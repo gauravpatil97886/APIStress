@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/choicetechlab/choicehammer/internal/activity"
+	"github.com/choicetechlab/choicehammer/internal/api/middleware"
 	"github.com/choicetechlab/choicehammer/internal/curl"
 	"github.com/choicetechlab/choicehammer/internal/engine"
 	"github.com/choicetechlab/choicehammer/internal/logger"
@@ -15,8 +17,9 @@ import (
 )
 
 type RunsHandler struct {
-	DB      *pgxpool.Pool
-	Manager *engine.Manager
+	DB       *pgxpool.Pool
+	Manager  *engine.Manager
+	Activity *activity.Service
 }
 
 type startBody struct {
@@ -113,28 +116,72 @@ func (h *RunsHandler) Start(c *gin.Context) {
 		CostInputs: body.CostInputs,
 	}
 
-	mr, err := h.Manager.Start(c.Request.Context(), cfg, testID, meta)
+	teamID := middleware.TeamID(c)
+	mr, err := h.Manager.Start(c.Request.Context(), cfg, testID, meta, teamID)
 	if err != nil {
 		logger.Error("manager.Start failed", zap.Error(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
+	}
+	if h.Activity != nil {
+		h.Activity.Log(c.Request.Context(), activity.Event{
+			TeamID:       teamID,
+			ActorType:    "user",
+			ActorName:    body.CreatedBy,
+			EventType:    activity.EventRunStart,
+			ToolSlug:     "apistress",
+			ResourceType: "run",
+			ResourceID:   mr.ID,
+			Meta: map[string]interface{}{
+				"name":     cfg.Name,
+				"vus":      cfg.VUs,
+				"jira":     body.JiraID,
+				"env":      envTag,
+			},
+			IP: c.ClientIP(),
+			UA: c.GetHeader("User-Agent"),
+		})
 	}
 	c.JSON(http.StatusAccepted, gin.H{"run_id": mr.ID})
 }
 
 func (h *RunsHandler) Stop(c *gin.Context) {
 	id := c.Param("id")
+	team := middleware.TeamID(c)
+	if mr, ok := h.Manager.Get(id); ok {
+		if team != "" && mr.TeamID != "" && mr.TeamID != team {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+	}
 	if !h.Manager.Stop(id) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "run not active"})
 		return
 	}
 	logger.Info("run stop requested", zap.String("run_id", id))
+	if h.Activity != nil {
+		h.Activity.Log(c.Request.Context(), activity.Event{
+			TeamID:       team,
+			ActorType:    "user",
+			EventType:    activity.EventRunStop,
+			ToolSlug:     "apistress",
+			ResourceType: "run",
+			ResourceID:   id,
+			IP:           c.ClientIP(),
+			UA:           c.GetHeader("User-Agent"),
+		})
+	}
 	c.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 func (h *RunsHandler) Status(c *gin.Context) {
 	id := c.Param("id")
+	team := middleware.TeamID(c)
 	if mr, ok := h.Manager.Get(id); ok {
+		if team != "" && mr.TeamID != "" && mr.TeamID != team {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{
 			"id":         mr.ID,
 			"name":       mr.Cfg.Name,
@@ -152,7 +199,7 @@ func (h *RunsHandler) Status(c *gin.Context) {
 	}
 	row := h.DB.QueryRow(c.Request.Context(),
 		`SELECT id, name, status, started_at, finished_at, summary, created_by, jira_id, jira_link, notes, config, env_tag
-		   FROM runs WHERE id=$1`, id)
+		   FROM runs WHERE id=$1 AND team_id=$2`, id, team)
 	var rid, name, status, createdBy, jiraID, jiraLink, notes, envTag string
 	var started, finished *time.Time
 	var summary, cfgRaw []byte
@@ -177,9 +224,10 @@ func (h *RunsHandler) Status(c *gin.Context) {
 }
 
 func (h *RunsHandler) List(c *gin.Context) {
+	team := middleware.TeamID(c)
 	rows, err := h.DB.Query(c.Request.Context(),
 		`SELECT id, name, status, started_at, finished_at, summary, created_by, jira_id, jira_link, config, env_tag
-		   FROM runs ORDER BY created_at DESC LIMIT 200`)
+		   FROM runs WHERE team_id=$1 ORDER BY created_at DESC LIMIT 200`, team)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

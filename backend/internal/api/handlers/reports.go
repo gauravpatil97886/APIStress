@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/choicetechlab/choicehammer/internal/api/middleware"
 	"github.com/choicetechlab/choicehammer/internal/cost"
 	"github.com/choicetechlab/choicehammer/internal/engine"
 	"github.com/choicetechlab/choicehammer/internal/logger"
@@ -38,10 +39,11 @@ type runRow struct {
 }
 
 func (h *ReportsHandler) loadRow(c *gin.Context, id string) (*runRow, error) {
+	team := middleware.TeamID(c)
 	row := h.DB.QueryRow(c.Request.Context(),
 		`SELECT id, name, status, started_at, finished_at, summary, config,
 		        created_by, jira_id, jira_link, notes, env_tag, cost_inputs
-		   FROM runs WHERE id=$1`, id)
+		   FROM runs WHERE id=$1 AND team_id=$2`, id, team)
 	var r runRow
 	var started, finished *time.Time
 	var summaryRaw, cfgRaw, costRaw []byte

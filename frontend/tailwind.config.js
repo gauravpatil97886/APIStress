@@ -13,8 +13,9 @@ export default {
         cool:  "#a855f7",
       },
       fontFamily: {
-        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
-        mono: ["JetBrains Mono", "ui-monospace", "monospace"],
+        sans:    ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono:    ["JetBrains Mono", "ui-monospace", "monospace"],
+        display: ["Fraunces", "ui-serif", "Georgia", "serif"],
       },
       animation: {
         "fade-in":   "fadeIn .25s ease-out",

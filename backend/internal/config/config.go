@@ -15,6 +15,7 @@ type Config struct {
 	LogDir        string
 	LogLevel      string
 	LogPretty     bool
+	AdminKey      string
 }
 
 func Load() (*Config, error) {
@@ -27,6 +28,7 @@ func Load() (*Config, error) {
 		LogDir:        env("CH_LOG_DIR", "logs"),
 		LogLevel:      env("CH_LOG_LEVEL", "info"),
 		LogPretty:     env("CH_LOG_PRETTY", "true") == "true",
+		AdminKey:      env("CH_ADMIN_KEY", "97886"),
 	}
 	if cfg.AccessKey == "" {
 		return nil, fmt.Errorf("CH_ACCESS_KEY must be set")

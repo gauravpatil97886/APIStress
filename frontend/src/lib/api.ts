@@ -2,15 +2,34 @@ const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8080"
 
 export const KEY_STORAGE = "ch_access_key";
 export const USER_STORAGE = "ch_user_name";
+export const TEAM_STORAGE = "ch_team";
 
 export function getKey(): string {
   return localStorage.getItem(KEY_STORAGE) || "";
 }
 export function setKey(k: string) { localStorage.setItem(KEY_STORAGE, k); }
-export function clearKey() { localStorage.removeItem(KEY_STORAGE); }
+export function clearKey() {
+  localStorage.removeItem(KEY_STORAGE);
+  localStorage.removeItem(TEAM_STORAGE);
+}
 
 export function getUser(): string { return localStorage.getItem(USER_STORAGE) || ""; }
 export function setUser(u: string) { localStorage.setItem(USER_STORAGE, u); }
+
+export type TeamInfo = {
+  id: string;
+  name: string;
+  description?: string;
+  tools_access?: string[];
+};
+
+export function getTeam(): TeamInfo | null {
+  try { return JSON.parse(localStorage.getItem(TEAM_STORAGE) || "null"); } catch { return null; }
+}
+export function setTeam(t: TeamInfo | null) {
+  if (t) localStorage.setItem(TEAM_STORAGE, JSON.stringify(t));
+  else localStorage.removeItem(TEAM_STORAGE);
+}
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers || {});
@@ -34,7 +53,7 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export const api = {
   base: BASE,
-  login: (key: string) => req<{ ok: boolean; token: string }>("/api/auth/login", {
+  login: (key: string) => req<{ ok: boolean; token: string; team: TeamInfo }>("/api/auth/login", {
     method: "POST", body: JSON.stringify({ key }),
   }),
   verify: () => req<{ ok: boolean }>("/api/auth/verify"),
@@ -82,8 +101,16 @@ export const api = {
     req<void>(`/api/postwomen/requests/${id}`, { method: "PUT", body: JSON.stringify(b) }),
   pwDeleteRequest: (id: string) =>
     req<void>(`/api/postwomen/requests/${id}`, { method: "DELETE" }),
-  pwSend: (request: any, vars: Record<string, string> = {}) =>
-    req<any>(`/api/postwomen/send`, { method: "POST", body: JSON.stringify({ request, vars }) }),
+  pwSend: (request: any, vars: Record<string, string> = {}, opts?: { saveHistory?: boolean }) =>
+    req<any>(`/api/postwomen/send`, {
+      method: "POST",
+      body: JSON.stringify({
+        request, vars,
+        // default true to preserve the existing single-send behaviour;
+        // the Runner passes false at lakh-scale to skip pw_history writes.
+        save_history: opts?.saveHistory ?? true,
+      }),
+    }),
   pwImport: (workspaceID: string, body: string) =>
     req<{ collection_id: string; counts: any }>(`/api/postwomen/import?workspace_id=${workspaceID}`, {
       method: "POST",
@@ -92,4 +119,81 @@ export const api = {
   pwExportURL: (collectionID: string) =>
     `${BASE}/api/postwomen/export/${collectionID}?key=${encodeURIComponent(getKey())}`,
   pwHistory: () => req<any[]>(`/api/postwomen/history`),
+
+  // Activity logger — fires events to populate the admin's audit feed.
+  // Best-effort: never let a logging failure break a real user flow.
+  logActivity: (e: {
+    event_type: string;
+    tool_slug?: string;
+    resource_type?: string;
+    resource_id?: string;
+    actor_name?: string;
+    meta?: Record<string, any>;
+  }) => req<{ ok: true }>("/api/activity", { method: "POST", body: JSON.stringify(e) }).catch(() => undefined),
+};
+
+// ── Admin API ────────────────────────────────────────────────────────────
+export const ADMIN_KEY_STORAGE = "ch_admin_key";
+
+export function getAdminKey(): string {
+  return sessionStorage.getItem(ADMIN_KEY_STORAGE) || "";
+}
+export function setAdminKey(k: string) { sessionStorage.setItem(ADMIN_KEY_STORAGE, k); }
+export function clearAdminKey() { sessionStorage.removeItem(ADMIN_KEY_STORAGE); }
+
+async function adminReq<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers || {});
+  headers.set("Content-Type", "application/json");
+  const k = getAdminKey();
+  if (k) headers.set("X-Admin-Key", k);
+  const res = await fetch(BASE + path, { ...init, headers });
+  if (!res.ok) {
+    let msg = `http ${res.status}`;
+    try { const j = await res.json(); if (j.error) msg = j.error; } catch {}
+    throw new Error(msg);
+  }
+  if (res.status === 204) return undefined as T;
+  return res.json() as Promise<T>;
+}
+
+export const adminApi = {
+  auth: (key: string) =>
+    fetch(BASE + "/api/admin/auth", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key }),
+    }).then(async (r) => {
+      if (!r.ok) {
+        let msg = "wrong admin passphrase";
+        try { const j = await r.json(); if (j.error) msg = j.error; } catch {}
+        throw new Error(msg);
+      }
+      return true;
+    }),
+  listTeams:    () => adminReq<any[]>("/api/admin/teams"),
+  createTeam:   (b: { name: string; description: string; tools: string[] }) =>
+    adminReq<{ team: any; plain_key: string }>("/api/admin/teams", {
+      method: "POST", body: JSON.stringify(b),
+    }),
+  renameTeam:   (id: string, b: any) =>
+    adminReq<void>(`/api/admin/teams/${id}`, { method: "PATCH", body: JSON.stringify(b) }),
+  deleteTeam:   (id: string) =>
+    adminReq<void>(`/api/admin/teams/${id}`, { method: "DELETE" }),
+  rotateKey:    (id: string) =>
+    adminReq<{ plain_key: string }>(`/api/admin/teams/${id}/rotate`, { method: "POST" }),
+  setActive:    (id: string, active: boolean) =>
+    adminReq<void>(`/api/admin/teams/${id}/active`, { method: "POST", body: JSON.stringify({ active }) }),
+  audit:        () => adminReq<any[]>("/api/admin/audit"),
+  // Cross-tool activity feed (POST /api/admin/activity).
+  activity: (params: {
+    team_id?: string; tool?: string; event?: string; q?: string;
+    since?: string; until?: string; limit?: number; offset?: number;
+  } = {}) => {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => v !== undefined && v !== "" && qs.set(k, String(v)));
+    const s = qs.toString();
+    return adminReq<any[]>(`/api/admin/activity${s ? "?" + s : ""}`);
+  },
+  activityStats: (hours = 168) =>
+    adminReq<any>(`/api/admin/activity/stats?hours=${hours}`),
 };

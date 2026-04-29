@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/choicetechlab/choicehammer/internal/api/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -20,8 +21,9 @@ type envBody struct {
 }
 
 func (h *EnvironmentsHandler) List(c *gin.Context) {
+	team := middleware.TeamID(c)
 	rows, err := h.DB.Query(c.Request.Context(),
-		`SELECT id, name, base_url, headers, created_at FROM environments ORDER BY name`)
+		`SELECT id, name, base_url, headers, created_at FROM environments WHERE team_id=$1 ORDER BY name`, team)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -57,11 +59,16 @@ func (h *EnvironmentsHandler) Create(c *gin.Context) {
 	if body.Headers == nil {
 		body.Headers = map[string]string{}
 	}
+	team := middleware.TeamID(c)
+	var teamArg interface{}
+	if team != "" {
+		teamArg = team
+	}
 	id := newID()
 	headersJSON, _ := json.Marshal(body.Headers)
 	_, err := h.DB.Exec(c.Request.Context(),
-		`INSERT INTO environments (id, name, base_url, headers) VALUES ($1, $2, $3, $4)`,
-		id, body.Name, body.BaseURL, headersJSON,
+		`INSERT INTO environments (id, name, base_url, headers, team_id) VALUES ($1, $2, $3, $4, $5)`,
+		id, body.Name, body.BaseURL, headersJSON, teamArg,
 	)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -72,7 +79,8 @@ func (h *EnvironmentsHandler) Create(c *gin.Context) {
 
 func (h *EnvironmentsHandler) Delete(c *gin.Context) {
 	id := c.Param("id")
-	_, err := h.DB.Exec(c.Request.Context(), `DELETE FROM environments WHERE id=$1`, id)
+	team := middleware.TeamID(c)
+	_, err := h.DB.Exec(c.Request.Context(), `DELETE FROM environments WHERE id=$1 AND team_id=$2`, id, team)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/choicetechlab/choicehammer/internal/api/middleware"
 	pw "github.com/choicetechlab/choicehammer/internal/postwomen"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -34,10 +35,64 @@ func newID() string {
 	)
 }
 
+// workspaceOwnedBy returns true if the workspace belongs to the team (or both empty).
+func (h *Handler) workspaceOwnedBy(c *gin.Context, wsID, team string) bool {
+	if wsID == "" {
+		return false
+	}
+	var owner *string
+	if err := h.DB.QueryRow(c.Request.Context(),
+		`SELECT team_id::text FROM pw_workspaces WHERE id=$1`, wsID).Scan(&owner); err != nil {
+		return false
+	}
+	if team == "" {
+		return owner == nil
+	}
+	return owner != nil && *owner == team
+}
+
+// collectionWorkspaceOwnedBy returns true if the collection's workspace belongs to team.
+func (h *Handler) collectionWorkspaceOwnedBy(c *gin.Context, collID, team string) bool {
+	if collID == "" {
+		return false
+	}
+	var owner *string
+	if err := h.DB.QueryRow(c.Request.Context(),
+		`SELECT w.team_id::text FROM pw_collections c
+		 JOIN pw_workspaces w ON w.id = c.workspace_id
+		 WHERE c.id = $1`, collID).Scan(&owner); err != nil {
+		return false
+	}
+	if team == "" {
+		return owner == nil
+	}
+	return owner != nil && *owner == team
+}
+
+// requestWorkspaceOwnedBy returns true if the request's workspace belongs to team.
+func (h *Handler) requestWorkspaceOwnedBy(c *gin.Context, reqID, team string) bool {
+	if reqID == "" {
+		return false
+	}
+	var owner *string
+	if err := h.DB.QueryRow(c.Request.Context(),
+		`SELECT w.team_id::text FROM pw_requests r
+		 JOIN pw_collections c ON c.id = r.collection_id
+		 JOIN pw_workspaces w ON w.id = c.workspace_id
+		 WHERE r.id = $1`, reqID).Scan(&owner); err != nil {
+		return false
+	}
+	if team == "" {
+		return owner == nil
+	}
+	return owner != nil && *owner == team
+}
+
 // ── Workspaces ───────────────────────────────────────────────────────────
 func (h *Handler) ListWorkspaces(c *gin.Context) {
+	team := middleware.TeamID(c)
 	rows, err := h.DB.Query(c.Request.Context(),
-		`SELECT id, name, created_at, updated_at FROM pw_workspaces ORDER BY created_at`)
+		`SELECT id, name, created_at, updated_at FROM pw_workspaces WHERE team_id=$1 ORDER BY created_at`, team)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -54,14 +109,21 @@ func (h *Handler) ListWorkspaces(c *gin.Context) {
 }
 
 func (h *Handler) CreateWorkspace(c *gin.Context) {
-	var b struct{ Name string `json:"name"` }
+	var b struct {
+		Name string `json:"name"`
+	}
 	if err := c.ShouldBindJSON(&b); err != nil || strings.TrimSpace(b.Name) == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace name required"})
 		return
 	}
+	team := middleware.TeamID(c)
+	var teamArg interface{}
+	if team != "" {
+		teamArg = team
+	}
 	id := newID()
 	if _, err := h.DB.Exec(c.Request.Context(),
-		`INSERT INTO pw_workspaces (id, name) VALUES ($1, $2)`, id, b.Name); err != nil {
+		`INSERT INTO pw_workspaces (id, name, team_id) VALUES ($1, $2, $3)`, id, b.Name, teamArg); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -69,6 +131,11 @@ func (h *Handler) CreateWorkspace(c *gin.Context) {
 }
 
 func (h *Handler) DeleteWorkspace(c *gin.Context) {
+	team := middleware.TeamID(c)
+	if !h.workspaceOwnedBy(c, c.Param("id"), team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
 	if _, err := h.DB.Exec(c.Request.Context(),
 		`DELETE FROM pw_workspaces WHERE id=$1`, c.Param("id")); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -80,6 +147,11 @@ func (h *Handler) DeleteWorkspace(c *gin.Context) {
 // ── Tree (collections + requests) for one workspace ─────────────────────
 func (h *Handler) Tree(c *gin.Context) {
 	wsID := c.Param("id")
+	team := middleware.TeamID(c)
+	if !h.workspaceOwnedBy(c, wsID, team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+		return
+	}
 	cols, err := h.queryCollections(c, wsID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -165,6 +237,11 @@ func (h *Handler) CreateCollection(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace_id and name required"})
 		return
 	}
+	team := middleware.TeamID(c)
+	if !h.workspaceOwnedBy(c, b.WorkspaceID, team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+		return
+	}
 	id := newID()
 	if _, err := h.DB.Exec(c.Request.Context(),
 		`INSERT INTO pw_collections (id, workspace_id, parent_id, name, is_folder)
@@ -177,9 +254,16 @@ func (h *Handler) CreateCollection(c *gin.Context) {
 }
 
 func (h *Handler) RenameCollection(c *gin.Context) {
-	var b struct{ Name string `json:"name"` }
+	var b struct {
+		Name string `json:"name"`
+	}
 	if err := c.ShouldBindJSON(&b); err != nil || b.Name == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "name required"})
+		return
+	}
+	team := middleware.TeamID(c)
+	if !h.collectionWorkspaceOwnedBy(c, c.Param("id"), team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
 	_, err := h.DB.Exec(c.Request.Context(),
@@ -192,6 +276,11 @@ func (h *Handler) RenameCollection(c *gin.Context) {
 }
 
 func (h *Handler) DeleteCollection(c *gin.Context) {
+	team := middleware.TeamID(c)
+	if !h.collectionWorkspaceOwnedBy(c, c.Param("id"), team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
 	_, err := h.DB.Exec(c.Request.Context(), `DELETE FROM pw_collections WHERE id=$1`, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -215,6 +304,15 @@ func (h *Handler) CreateRequest(c *gin.Context) {
 	}
 	if r.BodyKind == "" {
 		r.BodyKind = "none"
+	}
+	team := middleware.TeamID(c)
+	if r.CollectionID == nil || *r.CollectionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "collection_id required"})
+		return
+	}
+	if !h.collectionWorkspaceOwnedBy(c, *r.CollectionID, team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "collection not found"})
+		return
 	}
 	id := newID()
 	if err := h.insertRequest(c, id, r); err != nil {
@@ -244,6 +342,18 @@ func (h *Handler) UpdateRequest(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	team := middleware.TeamID(c)
+	if !h.requestWorkspaceOwnedBy(c, c.Param("id"), team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	// If moving to a different collection, verify ownership of target too.
+	if r.CollectionID != nil && *r.CollectionID != "" {
+		if !h.collectionWorkspaceOwnedBy(c, *r.CollectionID, team) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "target collection not found"})
+			return
+		}
+	}
 	headers, _ := json.Marshal(r.Headers)
 	query, _ := json.Marshal(r.Query)
 	body, _ := json.Marshal(r.Body)
@@ -262,6 +372,11 @@ func (h *Handler) UpdateRequest(c *gin.Context) {
 }
 
 func (h *Handler) DeleteRequest(c *gin.Context) {
+	team := middleware.TeamID(c)
+	if !h.requestWorkspaceOwnedBy(c, c.Param("id"), team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
 	_, err := h.DB.Exec(c.Request.Context(), `DELETE FROM pw_requests WHERE id=$1`, c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -273,28 +388,44 @@ func (h *Handler) DeleteRequest(c *gin.Context) {
 // ── Send ─────────────────────────────────────────────────────────────────
 func (h *Handler) Send(c *gin.Context) {
 	var b struct {
-		Request pw.Request        `json:"request"`
-		Vars    map[string]string `json:"vars"`
+		Request     pw.Request        `json:"request"`
+		Vars        map[string]string `json:"vars"`
+		SaveHistory *bool             `json:"save_history"` // nil → default true
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	team := middleware.TeamID(c)
+	if b.Request.ID != "" && !h.requestWorkspaceOwnedBy(c, b.Request.ID, team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "request not found"})
+		return
+	}
 	res := pw.Send(c.Request.Context(), b.Request, b.Vars)
 
-	// Persist a small history snapshot.
-	reqSnap, _ := json.Marshal(b.Request)
-	respSnap, _ := json.Marshal(res)
-	var reqIDArg interface{}
-	if b.Request.ID != "" {
-		reqIDArg = b.Request.ID
+	// Persist a small history snapshot, scoped to team — but only when the
+	// caller hasn't opted out. The Runner sets save_history=false at lakh-
+	// scale so a single user can't bloat pw_history with hundreds of
+	// thousands of rows and starve the DB for everyone else.
+	saveHistory := b.SaveHistory == nil || *b.SaveHistory
+	if saveHistory {
+		reqSnap, _ := json.Marshal(b.Request)
+		respSnap, _ := json.Marshal(res)
+		var reqIDArg interface{}
+		if b.Request.ID != "" {
+			reqIDArg = b.Request.ID
+		}
+		var teamArg interface{}
+		if team != "" {
+			teamArg = team
+		}
+		_, _ = h.DB.Exec(c.Request.Context(),
+			`INSERT INTO pw_history (request_id, method, url, status, duration_ms, response_bytes,
+			                          request_snapshot, response_snapshot, team_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			reqIDArg, b.Request.Method, b.Request.URL, res.Status,
+			res.DurationMs, res.SizeBytes, reqSnap, respSnap, teamArg)
 	}
-	_, _ = h.DB.Exec(c.Request.Context(),
-		`INSERT INTO pw_history (request_id, method, url, status, duration_ms, response_bytes,
-		                          request_snapshot, response_snapshot)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-		reqIDArg, b.Request.Method, b.Request.URL, res.Status,
-		res.DurationMs, res.SizeBytes, reqSnap, respSnap)
 
 	c.JSON(http.StatusOK, res)
 }
@@ -304,6 +435,11 @@ func (h *Handler) Import(c *gin.Context) {
 	wsID := c.Query("workspace_id")
 	if wsID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace_id is required"})
+		return
+	}
+	team := middleware.TeamID(c)
+	if !h.workspaceOwnedBy(c, wsID, team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
 		return
 	}
 	body, err := io.ReadAll(c.Request.Body)
@@ -367,6 +503,11 @@ func (h *Handler) Import(c *gin.Context) {
 
 func (h *Handler) Export(c *gin.Context) {
 	rootID := c.Param("id")
+	team := middleware.TeamID(c)
+	if !h.collectionWorkspaceOwnedBy(c, rootID, team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "collection not found"})
+		return
+	}
 
 	// Load just the subtree under this collection.
 	row := h.DB.QueryRow(c.Request.Context(),
@@ -451,9 +592,10 @@ func sanitizeFilename(s string) string {
 
 // ── History ─────────────────────────────────────────────────────────────
 func (h *Handler) History(c *gin.Context) {
+	team := middleware.TeamID(c)
 	rows, err := h.DB.Query(c.Request.Context(),
 		`SELECT method, url, status, duration_ms, response_bytes, ran_at
-		   FROM pw_history ORDER BY ran_at DESC LIMIT 50`)
+		   FROM pw_history WHERE team_id=$1 ORDER BY ran_at DESC LIMIT 50`, team)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

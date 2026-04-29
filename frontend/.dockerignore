@@ -1,0 +1,29 @@
+# Repo / VCS / IDE
+.git
+.gitignore
+.idea
+.vscode
+*.swp
+
+# Node deps + build
+node_modules
+dist
+.cache
+.vite
+
+# Local env
+.env
+.env.local
+.env.*.local
+
+# Test / coverage
+coverage
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Docs
+README.md
+CLAUDE.md
+*.md

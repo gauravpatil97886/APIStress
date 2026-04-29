@@ -1,45 +1,69 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: choicehammer
-      POSTGRES_PASSWORD: choicehammer
-      POSTGRES_DB: choicehammer
+      POSTGRES_USER: ${POSTGRES_USER:-choicehammer}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-choicehammer}
+      POSTGRES_DB: ${POSTGRES_DB:-choicehammer}
     ports:
-      - "5434:5432"
+      - "${POSTGRES_PORT:-5434}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U choicehammer"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-choicehammer}"]
       interval: 5s
       timeout: 3s
       retries: 10
 
   backend:
-    build: ./backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: choicehammer/backend:latest
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       CH_HTTP_ADDR: ":8080"
-      CH_POSTGRES_DSN: "postgres://choicehammer:choicehammer@postgres:5432/choicehammer?sslmode=disable"
+      CH_POSTGRES_DSN: "postgres://${POSTGRES_USER:-choicehammer}:${POSTGRES_PASSWORD:-choicehammer}@postgres:5432/${POSTGRES_DB:-choicehammer}?sslmode=disable"
       CH_ACCESS_KEY: "${CH_ACCESS_KEY:-choicehammer-dev-key}"
+      CH_ADMIN_KEY: "${CH_ADMIN_KEY:-97886}"
       CH_LOG_DIR: "/app/logs"
-      CH_LOG_LEVEL: "info"
-      CH_LOG_PRETTY: "true"
+      CH_LOG_LEVEL: "${CH_LOG_LEVEL:-info}"
+      CH_LOG_PRETTY: "${CH_LOG_PRETTY:-true}"
+      CH_MAX_VUS: "${CH_MAX_VUS:-50000}"
     ports:
-      - "8080:8080"
+      - "${BACKEND_PORT:-8080}:8080"
     volumes:
       - ./backend/logs:/app/logs
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: "${VITE_API_URL:-http://localhost:8080}"
+    image: choicehammer/frontend:latest
+    restart: unless-stopped
     depends_on:
-      - backend
-    environment:
-      VITE_API_URL: "http://localhost:8080"
+      backend:
+        condition: service_healthy
     ports:
-      - "5173:80"
+      - "${FRONTEND_PORT:-5173}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
 
 volumes:
   pgdata:
