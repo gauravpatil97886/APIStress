@@ -34,6 +34,7 @@ import {
 import toast from "react-hot-toast";
 import * as XLSX from "xlsx";
 import { api, clearKey, getTeam } from "../../lib/api";
+import { useDocumentTitle } from "../../hooks/useDocumentTitle";
 // @ts-ignore — Vite worker import
 import CrosswalkWorker from "./crosswalk.worker?worker";
 
@@ -87,6 +88,7 @@ const ROW_H = 28;
 export default function Crosswalk() {
   const nav = useNavigate();
   const team = getTeam();
+  useDocumentTitle("Crosswalk · Excel data joiner");
 
   const [primary, setPrimary] = useState<LoadedSide | null>(null);
   const [lookup, setLookup] = useState<LoadedSide | null>(null);

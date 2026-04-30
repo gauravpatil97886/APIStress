@@ -15,6 +15,7 @@ import toast from "react-hot-toast";
 import { ChoiceTechlabMark } from "../components/ui/ChoiceTechlabMark";
 import { adminApi, getAdminKey, setAdminKey, clearAdminKey } from "../lib/api";
 import { TOOLS, type ToolAccent } from "../tools/registry";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 type Team = {
   id: string;
@@ -42,12 +43,15 @@ const ALL_TOOLS = TOOLS.map(t => ({
 // Tailwind class atoms per accent. Keep these in sync with `themeFor()`
 // in the registry; we duplicate here so JSX can use them inline.
 function adminTone(a: ToolAccent) {
-  if (a === "brand") return { active: "bg-brand/15 text-brand ring-brand/40 border-brand/40", chip: "bg-brand/15 text-brand ring-brand/30" };
-  if (a === "sky")   return { active: "bg-sky-500/15 text-sky-400 ring-sky-500/40 border-sky-500/40", chip: "bg-sky-500/15 text-sky-400 ring-sky-500/30" };
+  if (a === "brand")  return { active: "bg-brand/15 text-brand ring-brand/40 border-brand/40", chip: "bg-brand/15 text-brand ring-brand/30" };
+  if (a === "sky")    return { active: "bg-sky-500/15 text-sky-400 ring-sky-500/40 border-sky-500/40", chip: "bg-sky-500/15 text-sky-400 ring-sky-500/30" };
+  if (a === "violet") return { active: "bg-violet-500/15 text-violet-300 ring-violet-500/40 border-violet-500/40", chip: "bg-violet-500/15 text-violet-300 ring-violet-500/30" };
+  if (a === "cyan")   return { active: "bg-cyan-500/15 text-cyan-300 ring-cyan-500/40 border-cyan-500/40", chip: "bg-cyan-500/15 text-cyan-300 ring-cyan-500/30" };
   return { active: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/40 border-emerald-500/40", chip: "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30" };
 }
 
 export default function Admin() {
+  useDocumentTitle("Admin console · Choice Techlab");
   const [authed, setAuthed] = useState<boolean>(() => !!getAdminKey());
   if (!authed) return <AdminLogin onAuthed={() => setAuthed(true)} />;
   return <AdminConsole onLogout={() => { clearAdminKey(); setAuthed(false); }} />;

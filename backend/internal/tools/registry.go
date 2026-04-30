@@ -12,6 +12,7 @@ var AllSlugs = []string{
 	"apistress",
 	"postwomen",
 	"crosswalk",
+	"kavach",
 }
 
 // IsAllowed returns true if `slug` is a known tool.

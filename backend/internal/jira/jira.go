@@ -247,6 +247,71 @@ func (c *Client) Attach(ctx context.Context, issueKey, filename string, content 
 	return nil
 }
 
+// CreateIssue files a NEW Jira issue. Used by Kavach's per-finding flow
+// where each finding becomes its own ticket.
+//
+// projectKey: project the issue is filed under (e.g. "CT"). If the client
+// has CH_JIRA_PROJECT_KEY locked, projectKey must match.
+// issueType: "Bug" / "Task" / "Story" — the human label of an issue type
+// configured on the project.
+// summary: title of the new issue.
+// body: wiki-text description (v2 API).
+// priority: optional; "Highest" / "High" / "Medium" / "Low" / "Lowest". Empty = no priority.
+// labels: optional list of labels.
+type CreatedIssue struct {
+	Key string `json:"key"`
+	URL string `json:"url"`
+}
+
+func (c *Client) CreateIssue(ctx context.Context, projectKey, issueType, summary, body, priority string, labels []string) (*CreatedIssue, error) {
+	if c.ProjectKey != "" && !strings.EqualFold(projectKey, c.ProjectKey) {
+		return nil, fmt.Errorf("issue must be filed under project %s (server-locked)", c.ProjectKey)
+	}
+	fields := map[string]interface{}{
+		"project":   map[string]interface{}{"key": strings.ToUpper(projectKey)},
+		"issuetype": map[string]interface{}{"name": issueType},
+		"summary":   summary,
+		"description": body,
+	}
+	if priority != "" {
+		fields["priority"] = map[string]interface{}{"name": priority}
+	}
+	if len(labels) > 0 {
+		// Jira labels can't contain spaces; normalise.
+		safe := make([]string, 0, len(labels))
+		for _, l := range labels {
+			l = strings.ReplaceAll(strings.TrimSpace(l), " ", "-")
+			if l != "" {
+				safe = append(safe, l)
+			}
+		}
+		fields["labels"] = safe
+	}
+	payload, _ := json.Marshal(map[string]interface{}{"fields": fields})
+
+	url := c.BaseURL + "/rest/api/2/issue"
+	req, _ := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payload))
+	req.Header.Set("Authorization", c.authHeader())
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		raw, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("create issue %d: %s", resp.StatusCode, truncate(string(raw), 400))
+	}
+	var out struct {
+		Key string `json:"key"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return &CreatedIssue{Key: out.Key, URL: c.BaseURL + "/browse/" + out.Key}, nil
+}
+
 // Comment posts a plain-text comment to an issue. We deliberately use the v2
 // API which accepts `{"body": "string"}` — the v3 ADF format would force us
 // to ship a doc tree, and our use-case (a one-paragraph summary + URL) reads

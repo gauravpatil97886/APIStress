@@ -94,6 +94,45 @@ export const api = {
       id: number; jira_id: string; jira_url: string; filename: string;
       bytes: number; attached_by: string; attached_at: string;
     }>>(`/api/runs/${runID}/jira-attachments`),
+  // Kavach — VAPT security scanner.
+  kavach: {
+    startScan: (b: {
+      curl?: string;
+      request?: any;
+      created_by?: string;
+      jira_id?: string;
+      jira_link?: string;
+      notes?: string;
+      categories?: string[];
+      rate_limit_rps?: number;
+      max_duration_sec?: number;
+      severity_threshold?: string;
+      confirm_hostname: string;
+    }) => req<{ scan_id: string }>("/api/kavach/scans", { method: "POST", body: JSON.stringify(b) }),
+    listScans: () => req<any[]>("/api/kavach/scans"),
+    getScan: (id: string) => req<any>(`/api/kavach/scans/${id}`),
+    stopScan: (id: string) => req<{ ok: boolean }>(`/api/kavach/scans/${id}/stop`, { method: "POST" }),
+    liveURL: (id: string) => `${BASE}/api/kavach/scans/${id}/live?key=${encodeURIComponent(getKey())}`,
+    pdfURL:  (id: string) => `${BASE}/api/kavach/scans/${id}/pdf?key=${encodeURIComponent(getKey())}`,
+    fileFinding: (findingID: number, b: {
+      project_key?: string; issue_type?: string; summary?: string;
+      comment?: string; priority?: string; labels?: string[];
+    }) => req<{ ok: boolean; jira_id: string; jira_url: string }>(
+      `/api/kavach/findings/${findingID}/file-jira`,
+      { method: "POST", body: JSON.stringify(b) },
+    ),
+    attachReport: (id: string, b: { jira_id: string; comment?: string }) =>
+      req<{ ok: boolean; jira_id: string; jira_url: string; filename: string }>(
+        `/api/kavach/scans/${id}/attach-jira`,
+        { method: "POST", body: JSON.stringify(b) },
+      ),
+    jiraLinks: (id: string) => req<Array<{
+      id: number; finding_id?: number | null; kind: "issue_created" | "report_attached";
+      jira_id: string; jira_url: string; filename?: string; bytes?: number;
+      actor: string; created_at: string;
+    }>>(`/api/kavach/scans/${id}/jira-links`),
+  },
+
   jiraLookupIssue: (key: string) => req<{
     key: string;
     summary: string;

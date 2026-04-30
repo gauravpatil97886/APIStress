@@ -8,6 +8,7 @@ import {
 import toast from "react-hot-toast";
 import { Wordmark } from "./Logo";
 import { api, clearKey, getTeam } from "../../lib/api";
+import { useDocumentTitle } from "../../hooks/useDocumentTitle";
 import { RunNotifier } from "./RunNotifier";
 import { TOOLS, enabledTools, type ToolAccent } from "../../tools/registry";
 
@@ -15,13 +16,17 @@ import { TOOLS, enabledTools, type ToolAccent } from "../../tools/registry";
 // and quick-jump buttons stay visually consistent regardless of how many
 // tools the registry grows to.
 function chipClass(a: ToolAccent): string {
-  if (a === "brand") return "bg-brand/15 text-brand ring-brand/30";
-  if (a === "sky")   return "bg-sky-500/15 text-sky-400 ring-sky-500/30";
+  if (a === "brand")  return "bg-brand/15 text-brand ring-brand/30";
+  if (a === "sky")    return "bg-sky-500/15 text-sky-400 ring-sky-500/30";
+  if (a === "violet") return "bg-violet-500/15 text-violet-300 ring-violet-500/30";
+  if (a === "cyan")   return "bg-cyan-500/15 text-cyan-300 ring-cyan-500/30";
   return "bg-emerald-500/15 text-emerald-300 ring-emerald-500/30";
 }
 function quickJumpClass(a: ToolAccent): string {
-  if (a === "brand") return "text-brand ring-brand/30 bg-brand/[.06] hover:bg-brand/[.12]";
-  if (a === "sky")   return "text-sky-400 ring-sky-500/30 bg-sky-500/[.06] hover:bg-sky-500/[.12]";
+  if (a === "brand")  return "text-brand ring-brand/30 bg-brand/[.06] hover:bg-brand/[.12]";
+  if (a === "sky")    return "text-sky-400 ring-sky-500/30 bg-sky-500/[.06] hover:bg-sky-500/[.12]";
+  if (a === "violet") return "text-violet-300 ring-violet-500/30 bg-violet-500/[.06] hover:bg-violet-500/[.12]";
+  if (a === "cyan")   return "text-cyan-300 ring-cyan-500/30 bg-cyan-500/[.06] hover:bg-cyan-500/[.12]";
   return "text-emerald-300 ring-emerald-500/30 bg-emerald-500/[.06] hover:bg-emerald-500/[.12]";
 }
 
@@ -79,6 +84,24 @@ export default function AppShell() {
 
   // close drawer when route changes
   useEffect(() => { setMobileOpen(false); }, [loc.pathname]);
+
+  // Per-route browser-tab title for APIStress's many sub-pages.
+  const apiStressTitle = (() => {
+    const p = loc.pathname;
+    if (p === "/")               return "APIStress · Dashboard";
+    if (p.startsWith("/builder")) return "APIStress · New test";
+    if (p.startsWith("/history")) return "APIStress · History";
+    if (p.startsWith("/tests"))   return "APIStress · Saved tests";
+    if (p.startsWith("/runs/"))   return "APIStress · Live run";
+    if (p === "/runs")            return "APIStress · Active runs";
+    if (p.startsWith("/reports/")) return "APIStress · Report";
+    if (p === "/reports")         return "APIStress · Reports";
+    if (p.startsWith("/environments")) return "APIStress · Environments";
+    if (p.startsWith("/compare")) return "APIStress · Compare";
+    if (p.startsWith("/overview")) return "APIStress · Guide";
+    return "APIStress · Hit your APIs hard";
+  })();
+  useDocumentTitle(apiStressTitle);
 
   // Log tool.open once per APIStress mount so the admin sees adoption.
   useEffect(() => {

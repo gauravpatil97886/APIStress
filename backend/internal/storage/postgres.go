@@ -26,6 +26,15 @@ var activitySQL string
 //go:embed migrations/005_jira.sql
 var jiraSQL string
 
+//go:embed migrations/006_vapt.sql
+var vaptSQL string
+
+//go:embed migrations/007_vapt_jira.sql
+var vaptJiraSQL string
+
+//go:embed migrations/008_vapt_explanation.sql
+var vaptExpSQL string
+
 type DB struct {
 	Pool *pgxpool.Pool
 }
@@ -80,6 +89,21 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 		pool.Close()
 		logger.Error("migration 005 failed", zap.Error(err))
 		return nil, fmt.Errorf("migrate 005: %w", err)
+	}
+	if _, err := pool.Exec(ctx, vaptSQL); err != nil {
+		pool.Close()
+		logger.Error("migration 006 failed", zap.Error(err))
+		return nil, fmt.Errorf("migrate 006: %w", err)
+	}
+	if _, err := pool.Exec(ctx, vaptJiraSQL); err != nil {
+		pool.Close()
+		logger.Error("migration 007 failed", zap.Error(err))
+		return nil, fmt.Errorf("migrate 007: %w", err)
+	}
+	if _, err := pool.Exec(ctx, vaptExpSQL); err != nil {
+		pool.Close()
+		logger.Error("migration 008 failed", zap.Error(err))
+		return nil, fmt.Errorf("migrate 008: %w", err)
 	}
 	logger.Info("postgres migrations applied")
 

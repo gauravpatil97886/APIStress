@@ -21,6 +21,7 @@ import (
 	"github.com/choicetechlab/choicehammer/internal/config"
 	"github.com/choicetechlab/choicehammer/internal/engine"
 	"github.com/choicetechlab/choicehammer/internal/jira"
+	"github.com/choicetechlab/choicehammer/internal/kavach"
 	"github.com/choicetechlab/choicehammer/internal/logger"
 	"github.com/choicetechlab/choicehammer/internal/metrics"
 	"github.com/choicetechlab/choicehammer/internal/protocols"
@@ -105,7 +106,8 @@ func main() {
 		})
 	}
 
-	r := api.New(cfg, db.Pool, mgr, teamSvc, activitySvc, jiraClient)
+	kavachMgr := kavach.NewManager(db.Pool)
+	r := api.New(cfg, db.Pool, mgr, teamSvc, activitySvc, jiraClient, kavachMgr)
 
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,

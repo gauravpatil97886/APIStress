@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import toast from "react-hot-toast";
 import { api, getTeam, clearKey } from "../../lib/api";
+import { useDocumentTitle } from "../../hooks/useDocumentTitle";
 import { PWWordmark, PWLogo } from "../../components/postwomen/Logo";
 import { parseCurl, prettyJSON } from "../../lib/curl";
 import Runner from "./Runner";
@@ -82,6 +83,7 @@ function generateCurl(req: Request): string {
 export default function PostWomen() {
   const nav = useNavigate();
   const team = getTeam();
+  useDocumentTitle("PostWomen · Try your APIs nicely");
   const tools = team?.tools_access || ["apistress", "postwomen"];
 
   // Gate: team without postwomen access can't be here.

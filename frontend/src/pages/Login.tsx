@@ -12,8 +12,10 @@ import { ChoiceTechlabMark } from "../components/ui/ChoiceTechlabMark";
 import { CreatedBy } from "../components/ui/CreatedBy";
 import { api, setKey, setTeam } from "../lib/api";
 import { MODE_KEY } from "./ModePicker";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 export default function Login() {
+  useDocumentTitle("Sign in · Choice Techlab");
   const [key, setKeyVal] = useState("");
   const [busy, setBusy] = useState(false);
   const nav = useNavigate();

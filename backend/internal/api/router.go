@@ -9,12 +9,13 @@ import (
 	"github.com/choicetechlab/choicehammer/internal/config"
 	"github.com/choicetechlab/choicehammer/internal/engine"
 	"github.com/choicetechlab/choicehammer/internal/jira"
+	"github.com/choicetechlab/choicehammer/internal/kavach"
 	"github.com/choicetechlab/choicehammer/internal/teams"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func New(cfg *config.Config, db *pgxpool.Pool, mgr *engine.Manager, teamSvc *teams.Service, actSvc *activity.Service, jiraClient *jira.Client) *gin.Engine {
+func New(cfg *config.Config, db *pgxpool.Pool, mgr *engine.Manager, teamSvc *teams.Service, actSvc *activity.Service, jiraClient *jira.Client, kavachMgr *kavach.Manager) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
 	r.Use(middleware.RequestLogger())
@@ -114,6 +115,20 @@ func New(cfg *config.Config, db *pgxpool.Pool, mgr *engine.Manager, teamSvc *tea
 	protected.GET("/environments", envs.List)
 	protected.POST("/environments", envs.Create)
 	protected.DELETE("/environments/:id", envs.Delete)
+
+	// Kavach — VAPT security scanner. Mirrors APIStress's run/SSE pattern,
+	// but with its own manager + scan/finding tables.
+	kav := &handlers.KavachHandler{DB: db, Mgr: kavachMgr, Activity: actSvc, Jira: jiraClient}
+	protected.POST("/kavach/scans",                      kav.Start)
+	protected.GET("/kavach/scans",                       kav.List)
+	protected.GET("/kavach/scans/:id",                   kav.Get)
+	protected.POST("/kavach/scans/:id/stop",             kav.Stop)
+	protected.GET("/kavach/scans/:id/pdf",               kav.PDF)
+	protected.POST("/kavach/scans/:id/attach-jira",      kav.AttachReport)
+	protected.GET("/kavach/scans/:id/jira-links",        kav.ListJiraLinks)
+	protected.POST("/kavach/findings/:id/file-jira",     kav.FileFinding)
+	// SSE endpoint behind TeamAuth (?key= for EventSource).
+	r.GET("/api/kavach/scans/:id/live", middleware.TeamAuth(teamSvc), kav.Stream)
 
 	return r
 }

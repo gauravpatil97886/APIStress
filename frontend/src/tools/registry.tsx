@@ -17,57 +17,86 @@
 
 import type { ComponentType } from "react";
 import type { LucideIcon } from "lucide-react";
-import { Hammer, Send, FileSpreadsheet } from "lucide-react";
+import { Hammer, Send, FileSpreadsheet, Shield } from "lucide-react";
 
 import PostWomen from "../pages/postwomen/PostWomen";
 import Crosswalk from "../pages/crosswalk/Crosswalk";
+import Kavach from "../pages/kavach/Kavach";
 
-export type ToolAccent = "brand" | "sky" | "green";
+export type ToolAccent = "brand" | "sky" | "green" | "violet" | "cyan";
 
 export type ToolDef = {
   slug: string;             // canonical id, also persisted in tools_access
   label: string;            // marketing name
-  tagline: string;          // 1-line product blurb
+  tagline: string;          // 1-line product blurb (always visible)
   chip: string;             // 2-letter chip shown in team cards (AS / PW / CW)
   accent: ToolAccent;       // theme key — components map to tailwind classes
   routePath: string;        // primary route entry-point
   shell: "appshell" | "standalone";
   Icon: LucideIcon;
   Page?: ComponentType<any>; // standalone tools only
+  // Optional richer marketing copy used by the ModePicker grid. Adding a
+  // new tool fills these in once and the picker page auto-renders its card.
+  description?: string;     // 2-3 sentence longer blurb (shown on hover/expand)
+  highlights?: string[];    // short bullet labels, max 4 (e.g. "PDF reports")
+  cta?: string;             // CTA label; defaults to "Open <label>"
 };
 
 export const TOOLS: ToolDef[] = [
   {
     slug: "apistress",
     label: "APIStress",
-    tagline: "Load testing",
+    tagline: "Hit your APIs hard",
     chip: "AS",
     accent: "brand",
     routePath: "/",
     shell: "appshell",
     Icon: Hammer,
+    description: "Real load tests with virtual users, live charts, plain-English insights, PDF reports, and run comparison.",
+    highlights: ["Live charts", "Comparison", "PDF reports"],
+    cta: "Start a load test",
   },
   {
     slug: "postwomen",
     label: "PostWomen",
-    tagline: "API client",
+    tagline: "Try your APIs nicely",
     chip: "PW",
     accent: "sky",
     routePath: "/postwomen",
     shell: "standalone",
     Icon: Send,
     Page: PostWomen,
+    description: "A clean, fast API client — collections, environments, curl import/export, Postman-compatible.",
+    highlights: ["Send & inspect", "Collections", "Postman import"],
+    cta: "Open the client",
   },
   {
     slug: "crosswalk",
     label: "Crosswalk",
-    tagline: "Excel data joiner",
+    tagline: "VLOOKUP without the formula",
     chip: "CW",
     accent: "green",
     routePath: "/crosswalk",
     shell: "standalone",
     Icon: FileSpreadsheet,
     Page: Crosswalk,
+    description: "Upload two sheets, pick a join column, splice columns from one into the other. Streams CSV at gigabyte scale.",
+    highlights: ["VLOOKUP joins", "10 GB CSVs", "Excel-ready"],
+    cta: "Open Crosswalk",
+  },
+  {
+    slug: "kavach",
+    label: "Kavach",
+    tagline: "Find the bugs attackers look for",
+    chip: "KV",
+    accent: "cyan",
+    routePath: "/kavach",
+    shell: "standalone",
+    Icon: Shield,
+    Page: Kavach,
+    description: "Paste any API request and Kavach runs the same probes a hostile attacker would, then explains in plain English what to fix.",
+    highlights: ["API VAPT", "Plain-English fixes", "Pro PDF report"],
+    cta: "Open Kavach",
   },
 ];
 
@@ -114,6 +143,34 @@ export function themeFor(accent: ToolAccent) {
         chipRing: "ring-emerald-500/30",
         chipBg: "bg-emerald-500/15",
         gradient: "from-emerald-300 via-emerald-500 to-emerald-700",
+      };
+    case "violet":
+      // Reserved accent — kept registered in case a future tool wants it.
+      return {
+        text: "text-violet-300",
+        ring: "ring-violet-500/30",
+        ringHover: "hover:ring-violet-500/60",
+        bg: "bg-violet-500/10",
+        bgSoft: "bg-violet-500/[.06]",
+        chipText: "text-violet-300",
+        chipRing: "ring-violet-500/30",
+        chipBg: "bg-violet-500/15",
+        gradient: "from-violet-400 via-violet-600 to-fuchsia-700",
+      };
+    case "cyan":
+      // Kavach — cyan-to-teal scanner palette. Reads as technical /
+      // pentest-tool, distinct from APIStress orange / PostWomen sky /
+      // Crosswalk emerald, doesn't fight severity colours.
+      return {
+        text: "text-cyan-300",
+        ring: "ring-cyan-500/30",
+        ringHover: "hover:ring-cyan-500/60",
+        bg: "bg-cyan-500/10",
+        bgSoft: "bg-cyan-500/[.06]",
+        chipText: "text-cyan-300",
+        chipRing: "ring-cyan-500/30",
+        chipBg: "bg-cyan-500/15",
+        gradient: "from-cyan-300 via-teal-500 to-cyan-700",
       };
   }
 }

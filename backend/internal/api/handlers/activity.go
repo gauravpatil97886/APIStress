@@ -37,6 +37,10 @@ var clientAllowedEvents = map[string]bool{
 	"feature.runner.export":   true,
 	"feature.pw.export":       true,
 	"feature.jira.attach":     true,
+	"feature.kavach.scan.start":      true,
+	"feature.kavach.scan.export":     true,
+	"feature.kavach.finding.filed":   true,
+	"feature.kavach.report.attached": true,
 }
 
 func (h *ActivityHandler) Log(c *gin.Context) {
