@@ -19,9 +19,9 @@ import type { ComponentType } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Hammer, Send, FileSpreadsheet, Shield } from "lucide-react";
 
-import PostWomen from "../pages/postwomen/PostWomen";
-import Crosswalk from "../pages/crosswalk/Crosswalk";
-import Kavach from "../pages/kavach/Kavach";
+import PostWomen from "./postwomen/pages/PostWomen";
+import Crosswalk from "./crosswalk/pages/Crosswalk";
+import Kavach from "./kavach/pages/Kavach";
 
 export type ToolAccent = "brand" | "sky" | "green" | "violet" | "cyan";
 

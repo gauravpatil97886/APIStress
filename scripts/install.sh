@@ -32,8 +32,8 @@ banner() {
      ██║  ██║██║     ██║ ███████║   ██║   ██║  ██║███████╗███████║███████║
      ╚═╝  ╚═╝╚═╝     ╚═╝ ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚══════╝╚══════╝
 
-                Hit your APIs hard. Know exactly what breaks.
-                          Open-source · self-hosted
+                Choice Techlab Internal Tools
+                       For internal organisation use only
 
 EOF
 }

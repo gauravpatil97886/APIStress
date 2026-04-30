@@ -1,24 +1,23 @@
 # Choice Techlab — Backend
 
-Go service with two binaries: an API/engine server and a `hammer` CLI. Powers APIStress (load testing) + PostWomen (API client) + Crosswalk-flavoured endpoints, with a unified activity feed and Jira integration, all behind shared team-scoped auth.
+Go service with two binaries: an API/engine server and a `hammer` CLI. Module path: `github.com/choicetechlab/choicehammer`.
+
+Hosts **APIStress** (load testing) + **PostWomen** (API client) + **Kavach** (API VAPT) endpoints, plus a shared team-scoped auth/admin layer, an activity feed, and a Jira integration. (Crosswalk is frontend-only.)
 
 ## Run locally
 
 ```bash
-# Postgres in Docker (only the db service)
-docker compose up -d postgres
+docker compose up -d postgres                  # postgres on :5434
 
-# Backend
 cd backend
 go mod tidy
-go run ./cmd/server
+go run ./cmd/server                            # API + engine on :8080
 
-# CLI
-go build -o ../bin/hammer ./cmd/hammer
+go build -o ../bin/hammer ./cmd/hammer         # CLI
 ../bin/hammer --help
 ```
 
-Reads config from env vars (see `internal/config/config.go`). Defaults assume the Docker Postgres on `localhost:5432` (or `:5434` in compose) with creds `choicehammer/choicehammer`.
+Reads config from env vars (see `internal/platform/config/config.go`).
 
 Important env vars:
 - `CH_HTTP_ADDR`        — listen address (default `:8080`)
@@ -27,56 +26,92 @@ Important env vars:
 - `CH_ADMIN_KEY`        — gate for `/api/admin/*` (default `97886` in dev)
 - `CH_LOG_DIR` / `CH_LOG_LEVEL` / `CH_LOG_PRETTY`
 - `CH_MAX_VUS`
-- **Jira**: `CH_JIRA_BASE_URL`, `CH_JIRA_AUTH_KIND` (`cloud_basic` | `server_pat`), `CH_JIRA_EMAIL` (Cloud only), `CH_JIRA_API_TOKEN`, `CH_JIRA_PROJECT_KEY` (optional project lock)
+- **Jira**: `CH_JIRA_BASE_URL`, `CH_JIRA_AUTH_KIND` (`cloud_basic` | `server_pat`), `CH_JIRA_EMAIL` (Cloud only), `CH_JIRA_API_TOKEN`, `CH_JIRA_PROJECT_KEY`
    - Cloud: `CH_JIRA_AUTH_KIND=cloud_basic` + email + API token; backend sends `Basic base64(email:token)`.
    - Server / Data Center: `CH_JIRA_AUTH_KIND=server_pat` + PAT only; backend sends `Bearer <pat>`.
-   - Leave any of these blank → integration disables itself; `/api/jira/health` returns `{configured:false}` and the UI hides Jira controls.
+   - Leave any blank → integration disables itself; `/api/jira/health` returns `{configured:false}`.
 
-## Layout
+## Layout — platform vs tools
 
 ```
 backend/
 ├── cmd/
-│   ├── server/           # HTTP API + engine + bootstrap teams + auto-attach hook
-│   └── hammer/           # CLI: hammer run --curl … --by … --jira CT-123
-├── internal/
-│   ├── engine/           # Runner, VU, Scheduler, Batcher, Pool, Manager (FinishHook)
-│   ├── protocols/        # http.go, websocket.go (each implements engine.Executor)
-│   ├── metrics/          # HDR histogram, Collector, snapshots
-│   ├── curl/             # `curl …` → engine.HTTPRequest
-│   ├── report/           # HTML template + gofpdf PDF + sparkline SVG
-│   ├── teams/            # Team + key persistence, bcrypt auth, admin ops, audit
-│   ├── tools/            # Canonical tool slug registry — single source for tools_access
-│   ├── activity/         # Cross-tool event sink + admin queries (List, Stats)
-│   ├── jira/             # Tiny Jira REST client: Health, GetIssue, Attach, Comment
-│   ├── postwomen/        # PostWomen models + Postman import/export + Send()
-│   ├── api/
-│   │   ├── router.go
-│   │   ├── handlers/     # auth, tests, runs, live (SSE), reports, environments,
-│   │   │                 # compare, cost, activity, jira, postwomen/, admin/
-│   │   └── middleware/   # TeamAuth, KeyAuth (legacy), CORS, RequestLogger, Recovery
-│   ├── storage/          # pgx pool + migrations 001..005 (applied on boot, in order)
-│   ├── logger/           # zap with daily-rotating file in /logs
-│   └── config/
-└── logs/                 # daily-rotating json log files (created at runtime)
+│   ├── server/                      # HTTP API + engine + bootstrap teams + auto-attach hook
+│   └── hammer/                      # CLI: hammer run --curl … --by … --jira CT-123
+└── internal/
+    ├── platform/                    # SHARED — used by every tool
+    │   ├── activity/                # cross-tool event sink (Log, List, Stats)
+    │   ├── api/
+    │   │   ├── router.go            # gin.Engine factory; wires every handler
+    │   │   └── middleware/          # TeamAuth, KeyAuth, CORS, RequestLogger, Recovery
+    │   ├── config/                  # env-driven config
+    │   ├── curl/                    # curl-string parser used by every tool
+    │   ├── handlers/                # cross-tool handlers
+    │   │   ├── auth.go              # /api/auth/login, /api/auth/verify
+    │   │   ├── activity.go          # frontend-emitted activity events
+    │   │   ├── jira.go              # /api/jira/health, /api/jira/issue/:key, run attaches
+    │   │   ├── util.go              # tiny helpers (newID, …)
+    │   │   └── admin/               # /api/admin/* — teams, audit, activity, jira
+    │   ├── jira/                    # Jira REST client (Health, GetIssue, Attach, Comment)
+    │   ├── logger/                  # zap with daily-rotating file in logs/
+    │   ├── storage/                 # pgx pool + embedded migrations
+    │   ├── teams/                   # multi-tenant team service + bcrypt + audit
+    │   └── tools/                   # canonical AllSlugs registry
+    └── tools/                       # PER-TOOL — one folder per product
+        ├── apistress/
+        │   ├── engine/              # Runner, Manager, Scheduler, Batcher, Pool, VU
+        │   ├── metrics/             # HDR histogram, Collector, snapshots
+        │   ├── protocols/           # http.go, websocket.go (impl engine.Executor)
+        │   ├── cost/                # AWS-style cost calculator
+        │   ├── report/              # HTML template + gofpdf PDF + sparkline
+        │   └── handlers/            # tests, runs, live (SSE), reports, compare, cost, environments, util
+        ├── postwomen/
+        │   ├── store/               # workspace/collection/request models + Postman import/export + Send()
+        │   └── handlers/            # /api/postwomen/* routes
+        └── kavach/                  # API VAPT
+            ├── *.go                 # types, engine, runner, safety, catalog, explanations, test_*.go, report, persistence (single package)
+            └── handlers/            # /api/kavach/* + SSE
 ```
 
-Migrations:
+Migrations (numbered, idempotent, applied in order on boot — under `internal/platform/storage/migrations/`):
 - `001_init.sql` — engine + reports core schema.
 - `002_postwomen.sql` — PostWomen workspaces / collections / requests / history.
 - `003_teams.sql` — teams, team_keys, team_members, admin_audit + `team_id` on every user-data table.
 - `004_activity.sql` — `activity_log` with team / event / tool / ts indexes.
 - `005_jira.sql` — `jira_attachments` paper-trail.
+- `006_vapt.sql` — Kavach scans, findings, run-state.
+- `007_vapt_jira.sql` — per-finding Jira link table.
+- `008_vapt_explanation.sql` — plain-English fields on findings.
 
-## Engine flow
+## Tool isolation rules (the big one)
 
-1. `engine.Manager.Start(ctx, cfg, testID, meta, teamID)` inserts a `runs` row (with `team_id`), builds a `Runner`, and returns a `ManagedRun` (which carries `TeamID`).
+- **Tools may import from `platform/`.** Always.
+- **Platform may NEVER import from `tools/`.** If platform needs a type or helper, the type belongs in platform.
+- **Tools may NOT import from sibling tools.** If two tools genuinely need the same code, lift it into `platform/`.
+
+Allowed:
+```go
+import "github.com/choicetechlab/choicehammer/internal/platform/teams"        // tool → platform ✓
+import "github.com/choicetechlab/choicehammer/internal/tools/apistress/cost"  // same tool ✓
+```
+
+Forbidden:
+```go
+import "github.com/choicetechlab/choicehammer/internal/tools/postwomen/store" // from inside kavach ✗
+import "github.com/choicetechlab/choicehammer/internal/tools/apistress/engine"// from inside platform ✗
+```
+
+(There is one exception today: `internal/platform/api/router.go` imports the per-tool `handlers` packages to wire routes. That is the seam, not a leak — the router lives in platform precisely because it is the wiring layer.)
+
+## Engine flow (APIStress)
+
+1. `engine.Manager.Start(ctx, cfg, testID, meta, teamID)` inserts a `runs` row (with `team_id`), builds a `Runner`, returns a `ManagedRun` (carries `TeamID`).
 2. The `Runner` starts:
    - a `Scheduler` (computes desired VU count each 100 ms based on pattern),
-   - a supervisor that ticks every 200 ms and spawns / cancels VU goroutines to match `Scheduler.Target()`,
+   - a supervisor that ticks every 200 ms and spawns / cancels VU goroutines,
    - a `Batcher` that drains the results channel and once per second flushes a `SecondBucket` via `OnBucket`.
-3. Each VU runs a tight `Execute → record result → optional think-time → repeat` loop until its context is cancelled.
-4. `Manager`'s `OnBucket` callback persists the bucket to `run_metrics` and broadcasts to all `LiveSubscriber`s.
+3. Each VU runs a tight `Execute → record result → optional think-time → repeat` loop until cancelled.
+4. `Manager.OnBucket` persists the bucket to `run_metrics` and broadcasts to all `LiveSubscriber`s.
 5. On exit, the manager writes a final `summary` (totals + full series) into `runs.summary`.
 
 ## Concurrency rules
@@ -88,59 +123,28 @@ Migrations:
 
 ## Multi-tenancy & isolation
 
-- Migration `003_teams.sql` adds `teams`, `team_keys`, `team_members`, `admin_audit`, plus `team_id UUID` columns on `runs`, `tests`, `environments`, `pw_workspaces`, `pw_history`.
+- Migration `003_teams.sql` adds `teams`, `team_keys`, `team_members`, `admin_audit`, plus `team_id UUID` columns on every user-data table.
 - On boot, `teams.Service.Bootstrap(ctx, CH_ACCESS_KEY)` ensures a **Legacy** team exists, backfills every NULL `team_id` to Legacy, and seeds Legacy with a key matching `CH_ACCESS_KEY`. Idempotent.
 - `middleware.TeamAuth(svc)` runs on every `/api/...` route in the `protected` group. It bcrypt-checks the key (header `X-Access-Key` / `Authorization: Bearer …` / `?key=`), enforces `is_active`, and sets `team_id`/`team_name` in the gin context.
-- Handlers read `team := middleware.TeamID(c)` and **MUST** include `WHERE team_id=$N` in every read/write query against user-data tables. PostWomen collections/requests check ownership transitively via their workspace.
-- The SSE live endpoint uses `TeamAuth` too (with `?key=` extraction), and `live.go` rejects subscriptions when `mr.TeamID` doesn't match the caller's team.
-- Adding a new handler? If it touches user data, put it inside `protected := r.Group("/api", middleware.TeamAuth(teamSvc))` and filter by team.
+- Handlers read `team := middleware.TeamID(c)` and **MUST** include `WHERE team_id=$N` in every read/write query against user-data tables.
+- The SSE live endpoints use `TeamAuth` too (with `?key=` extraction), and reject subscriptions when the run's team_id doesn't match the caller's team.
 
-## Admin
+## Adding a new endpoint
 
-`/api/admin/*` is a separate auth scope using `CH_ADMIN_KEY` (header `X-Admin-Key`). Endpoints:
-- Teams CRUD, key rotation, set `tools_access` (validated against `tools.AllSlugs`).
-- `/api/admin/audit` — admin mutation history.
-- `/api/admin/activity` + `/api/admin/activity/stats` — cross-tool event feed + 7-day rollups (tool adoption, top teams, hourly timeline). Filters: `team_id`, `tool`, `event`, `q`, `since`, `until`, `limit`, `offset`.
-- `/api/admin/jira/health` — same probe as the user endpoint (returns avatar / displayName / email / accountId / timezone) so the admin's Jira tab can show "Connected as <profile card>".
+1. If it touches user data, put it inside the `protected` group:
+   ```go
+   protected.POST("/foo/bar", handler.Bar)
+   ```
+2. In the handler, **always**:
+   ```go
+   teamID := middleware.TeamID(c)
+   // ... and filter by team_id in every query.
+   ```
+3. If the handler should emit an activity event, call `actSvc.Log(ctx, activity.Event{...})`. Best-effort, never blocks.
 
-The plaintext team key is shown to the admin **once** at create/rotate time; only the bcrypt hash is stored. Every mutation is mirrored from `admin_audit` into `activity_log` as `admin.action` so the cross-tool activity feed shows admin events too.
+## Adding a new protocol (APIStress)
 
-## Activity tracking
-
-`internal/activity` is the unified event sink. Use `Service.Log(ctx, Event{...})` from anywhere — never blocks, errors are logged but never returned. Common event types live as constants in the package (`EventLogin`, `EventRunStart`, `EventPwSend`, `EventCrosswalkJoin`, …). Frontend posts client-side events via `POST /api/activity` against an allow-list (`auth.logout`, `tool.open`, `feature.crosswalk.{join,export}`, `feature.runner.{start,export}`, `feature.pw.export`, `feature.jira.attach`); the backend trusts only the `team_id` from auth context, never the body.
-
-## Jira integration
-
-`internal/jira` is a 200-line REST client. Two auth modes:
-- `cloud_basic` — Atlassian Cloud, `Authorization: Basic base64(email:token)`.
-- `server_pat`  — Self-hosted, `Authorization: Bearer <pat>`.
-
-Surface:
-- `Health(ctx)` — `GET /rest/api/2/myself` returning displayName / email / avatar / accountId.
-- `GetIssue(ctx, key)` — fetches summary + assignee (with `[~accountid:…]` mention token for Cloud, `[~name]` for Server) + status + priority.
-- `Attach(ctx, key, filename, content, mime)` — multipart upload with `X-Atlassian-Token: no-check`.
-- `Comment(ctx, key, body)` — wiki-markup comment.
-- `ValidateProject(key)` — enforces `CH_JIRA_PROJECT_KEY` if set.
-
-Endpoints (`internal/api/handlers/jira.go`):
-- `GET /api/jira/health` — frontend badge.
-- `GET /api/jira/issue/:key` — live preview while typing.
-- `POST /api/runs/:id/attach-jira` — manual attach.
-- `GET /api/runs/:id/jira-attachments` — per-run history.
-
-Auto-attach hook (`cmd/server/main.go::autoAttachOnFinish`) registered via `Manager.SetFinishHook` runs after every terminal run. When `RunMeta.AutoAttachJira` is true, it re-renders the PDF, attaches it, and posts an assignee-mentioning wiki-formatted comment built by `BuildJiraSummaryComment`. Failures are logged to `activity_log` as `feature.jira.error` with `meta.reason` + `meta.error` so the admin Jira tab can surface them.
-
-## Logging
-
-`internal/logger` builds a zap logger that tees to:
-- `logs/choicehammer-YYYY-MM-DD.log` (JSON, lumberjack rotation, 100 MB / 30 backups / 90 days)
-- stdout (colourised dev format)
-
-A goroutine rotates the file at midnight local time. Use `logger.Info/Warn/Error/Debug` from anywhere — the package keeps a global `*zap.Logger`.
-
-## Adding a new protocol
-
-1. Implement `engine.Executor` (`Execute(ctx) Result`, `Close()`) in `internal/protocols/<name>.go`.
+1. Implement `engine.Executor` (`Execute(ctx) Result`, `Close()`) in `internal/tools/apistress/protocols/<name>.go`.
 2. Wire it up in `protocols/protocol.go` (`New` switch).
 3. The engine doesn't care what protocol you use — it only sees the `Result` (status, duration, bytes, error).
 
@@ -148,6 +152,14 @@ A goroutine rotates the file at midnight local time. Use `logger.Info/Warn/Error
 
 `cmd/hammer/main.go` uses `cobra`. Each command does an authenticated HTTP call to the server. Always pass `--by` and `--jira` for runs — the API rejects them otherwise.
 
+## Logging
+
+`internal/platform/logger` builds a zap logger that tees to:
+- `logs/choicehammer-YYYY-MM-DD.log` (JSON, lumberjack rotation, 100 MB / 30 backups / 90 days)
+- stdout (colourised dev format)
+
+A goroutine rotates the file at midnight local time. Use `logger.Info/Warn/Error/Debug` from anywhere — the package keeps a global `*zap.Logger`.
+
 ## Docker
 
-`backend/Dockerfile` is a multi-stage build with BuildKit cache mounts, runs as non-root, ships a `wget`-based `/healthz` HEALTHCHECK, and emits a stripped static binary (`-trimpath -ldflags="-s -w"`). Build context is trimmed by `.dockerignore`.
+`backend/Dockerfile` is a multi-stage build with BuildKit cache mounts, runs as non-root, ships a `wget`-based `/healthz` HEALTHCHECK, and emits a stripped static binary (`-trimpath -ldflags="-s -w"`).

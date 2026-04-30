@@ -1,21 +1,22 @@
 import { Navigate, Route, Routes } from "react-router-dom";
-import AppShell from "./components/ui/AppShell";
-import { getKey } from "./lib/api";
+import AppShell from "./platform/components/layout/AppShell";
+import { getKey } from "./platform/api/client";
 
-import Login from "./pages/Login";
-import Dashboard from "./pages/Dashboard";
-import TestBuilder from "./pages/TestBuilder";
-import Runs from "./pages/Runs";
-import LiveRun from "./pages/LiveRun";
-import Reports from "./pages/Reports";
-import ReportDetail from "./pages/ReportDetail";
-import History from "./pages/History";
-import Compare from "./pages/Compare";
-import Overview from "./pages/Overview";
-import ModePicker from "./pages/ModePicker";
-import Admin from "./pages/Admin";
-import SavedTests from "./pages/SavedTests";
-import Environments from "./pages/Environments";
+import Login from "./platform/pages/Login";
+import ModePicker from "./platform/pages/ModePicker";
+import Admin from "./platform/pages/Admin";
+
+import Dashboard from "./tools/apistress/pages/Dashboard";
+import TestBuilder from "./tools/apistress/pages/TestBuilder";
+import Runs from "./tools/apistress/pages/Runs";
+import LiveRun from "./tools/apistress/pages/LiveRun";
+import Reports from "./tools/apistress/pages/Reports";
+import ReportDetail from "./tools/apistress/pages/ReportDetail";
+import History from "./tools/apistress/pages/History";
+import Compare from "./tools/apistress/pages/Compare";
+import Overview from "./tools/apistress/pages/Overview";
+import SavedTests from "./tools/apistress/pages/SavedTests";
+import Environments from "./tools/apistress/pages/Environments";
 import { TOOLS } from "./tools/registry";
 
 function Protected({ children }: { children: JSX.Element }) {

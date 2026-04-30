@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import toast from "react-hot-toast";
-import { api, getKey } from "../lib/api";
+import { api, getKey } from "../platform/api/client";
 
 type Run = {
   id: string;

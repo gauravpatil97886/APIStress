@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/choicetechlab/choicehammer/internal/curl"
-	"github.com/choicetechlab/choicehammer/internal/engine"
+	"github.com/choicetechlab/choicehammer/internal/platform/curl"
+	"github.com/choicetechlab/choicehammer/internal/tools/apistress/engine"
 	"github.com/spf13/cobra"
 )
 
