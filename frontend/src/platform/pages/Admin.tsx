@@ -199,7 +199,7 @@ function AdminConsole({ onLogout }: { onLogout: () => void }) {
   const [editing, setEditing] = useState<Team | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<TabId>("teams");
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(false);
 
   // Service health for the top-bar pill — driven by the Jira probe + a
   // simple "did the teams call succeed?" boolean for DB.
@@ -241,7 +241,7 @@ function AdminConsole({ onLogout }: { onLogout: () => void }) {
   useEffect(() => { reload(); loadAux(); }, []);
   useEffect(() => {
     if (!autoRefresh) return;
-    const t = setInterval(() => { reload(); loadAux(); }, 10_000);
+    const t = setInterval(() => { reload(); loadAux(); }, 60_000);
     return () => clearInterval(t);
   }, [autoRefresh]);
 
@@ -314,10 +314,10 @@ function AdminConsole({ onLogout }: { onLogout: () => void }) {
             ${autoRefresh
               ? "bg-good/10 text-good ring-good/30"
               : "bg-bg-card text-ink-muted ring-bg-border"}`}
-          title={autoRefresh ? "Auto-refresh ON (10s)" : "Auto-refresh OFF"}
+          title={autoRefresh ? "Auto-refresh ON (every 1 min)" : "Auto-refresh OFF — click to enable"}
         >
           {autoRefresh ? <PlayCircle className="w-3.5 h-3.5" /> : <PauseCircle className="w-3.5 h-3.5" />}
-          {autoRefresh ? "Auto · 10s" : "Paused"}
+          {autoRefresh ? "Auto · 1m" : "Manual"}
         </button>
 
         {/* Refresh now */}
@@ -1120,7 +1120,7 @@ function ActivityTab({ teams }: { teams: Team[] }) {
   const [items, setItems] = useState<any[]>([]);
   const [stats, setStats] = useState<any | null>(null);
   const [loading, setLoading] = useState(true);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(false);
   const [windowHours, setWindowHours] = useState(168);
 
   const [filterTeam, setFilterTeam] = useState("");
@@ -1163,7 +1163,7 @@ function ActivityTab({ teams }: { teams: Team[] }) {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [filterTeam, filterTool, filterEvent, search, windowHours]);
   useEffect(() => {
     if (!autoRefresh) return;
-    const t = setInterval(() => load(), 10_000);
+    const t = setInterval(() => load(), 60_000);
     return () => clearInterval(t);
     // eslint-disable-next-line
   }, [autoRefresh, filterTeam, filterTool, filterEvent, search, windowHours]);
@@ -1711,7 +1711,7 @@ function JiraTab() {
   const [successes, setSuccesses] = useState<any[]>([]);
   const [errors, setErrors] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
-  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [autoRefresh, setAutoRefresh] = useState(false);
   useTick(15000);
 
   async function load() {
@@ -1731,7 +1731,7 @@ function JiraTab() {
   useEffect(() => { load(); }, []);
   useEffect(() => {
     if (!autoRefresh) return;
-    const t = setInterval(load, 15_000);
+    const t = setInterval(load, 60_000);
     return () => clearInterval(t);
     // eslint-disable-next-line
   }, [autoRefresh]);

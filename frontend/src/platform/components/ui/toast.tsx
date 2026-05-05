@@ -151,12 +151,15 @@ function ToastBody({
         </button>
       )}
 
-      {/* Progress bar */}
+      {/* Progress bar — drains from 100% to 0% over `duration` ms while visible. */}
       <motion.div
         className={["absolute bottom-0 left-0 h-[2px]", cfg.progress].join(" ")}
         initial={{ width: "100%" }}
         animate={{ width: t.visible ? "0%" : "0%" }}
-        transition={{ duration: duration / 1000, ease: "linear" }}
+        transition={{
+          duration: t.visible ? duration / 1000 : 0,
+          ease: "linear",
+        }}
       />
     </motion.div>
   );
@@ -178,7 +181,7 @@ function emit(variant: Variant, input: ToastInput, opts: Opts = {}) {
   const dismissable =
     opts.dismissable ?? (variant === "error" || variant === "warning");
 
-  return toast.custom(
+  const id = toast.custom(
     (t) => (
       <ToastBody
         t={t}
@@ -191,6 +194,18 @@ function emit(variant: Variant, input: ToastInput, opts: Opts = {}) {
     ),
     { duration, id: opts.id },
   );
+
+  // Belt-and-suspenders: react-hot-toast's `toast.custom` does not always
+  // honour the `duration` option for auto-dismissal in every version. We
+  // schedule an explicit dismiss to guarantee the toast disappears, plus
+  // a removal after the exit-animation finishes so the DOM doesn't leak
+  // hidden toast nodes.
+  if (duration !== Infinity) {
+    setTimeout(() => toast.dismiss(id), duration);
+    setTimeout(() => toast.remove(id), duration + 600);
+  }
+
+  return id;
 }
 
 export const showToast = {

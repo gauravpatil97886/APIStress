@@ -29,8 +29,13 @@ export default function Login() {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    if (!keyVal.trim()) {
+    const trimmed = keyVal.trim();
+    if (!trimmed) {
       showToast.warning("Enter your team access key to continue.");
+      return;
+    }
+    if (trimmed.length > 100) {
+      showToast.error("Access keys are at most 100 characters. Check what you pasted.");
       return;
     }
     setBusy(true);
@@ -126,17 +131,13 @@ function BrandPanel() {
         "border-b lg:border-b-0 lg:border-r border-white/5",
       ].join(" ")}
     >
-      {/* gradient orbs locked to the panel */}
-      <motion.div
+      {/* gradient orbs (static — animations were burning CPU and delaying input) */}
+      <div
         aria-hidden
-        animate={{ x: [0, 40, -20, 0], y: [0, -30, 20, 0], opacity: [0.6, 0.85, 0.6] }}
-        transition={{ duration: 22, repeat: Infinity, ease: "easeInOut" }}
         className="absolute -top-32 -left-24 w-[28rem] h-[28rem] rounded-full bg-brand/30 blur-3xl pointer-events-none"
       />
-      <motion.div
+      <div
         aria-hidden
-        animate={{ x: [0, -30, 20, 0], y: [0, 40, -20, 0], opacity: [0.4, 0.7, 0.4] }}
-        transition={{ duration: 26, repeat: Infinity, ease: "easeInOut", delay: 3 }}
         className="absolute -bottom-32 -right-32 w-[30rem] h-[30rem] rounded-full bg-violet-600/30 blur-3xl pointer-events-none"
       />
       <GridPattern />
@@ -240,18 +241,13 @@ function BrandPanel() {
 // ── Animated shield/lock icon ────────────────────────────────────────────
 function AnimatedShield() {
   return (
-    <motion.div
-      animate={{ rotate: [0, 4, -2, 0] }}
-      transition={{ duration: 6, repeat: Infinity, ease: "easeInOut" }}
-      className="relative shrink-0"
-    >
+    <div className="relative shrink-0">
       <ChoiceTechlabMark size={42} />
-      <motion.div
-        animate={{ opacity: [0.4, 0.9, 0.4], scale: [1, 1.18, 1] }}
-        transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+      <div
+        aria-hidden
         className="absolute inset-0 rounded-full bg-brand/40 blur-xl pointer-events-none"
       />
-    </motion.div>
+    </div>
   );
 }
 
@@ -268,15 +264,13 @@ function LoginCard({
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 20, scale: 0.97 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.7, delay: 0.25, ease: [0.16, 1, 0.3, 1] }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.35, ease: "easeOut" }}
       className="relative w-full max-w-md"
     >
-      <motion.div
+      <div
         aria-hidden
-        animate={{ opacity: [0.3, 0.55, 0.3] }}
-        transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
         className="absolute -inset-8 rounded-3xl bg-gradient-to-br from-brand/20 via-violet-500/15 to-transparent blur-3xl pointer-events-none"
       />
 
@@ -284,7 +278,7 @@ function LoginCard({
         onSubmit={onSubmit}
         className="relative card p-7 sm:p-9 ring-1 ring-bg-border shadow-2xl shadow-black/40 backdrop-blur-md"
       >
-        <div className="absolute -top-px -right-px w-24 h-24 rounded-tr-2xl bg-gradient-to-br from-brand/30 to-transparent pointer-events-none" />
+        <div className="absolute -top-px -right-px w-24 h-24 rounded-tr-2xl bg-gradient-to-br from-brand/30 to-transparent pointer-events-none rounded-bl-2xl" />
 
         {/* Heading */}
         <div className="mb-6">
@@ -310,13 +304,28 @@ function LoginCard({
               type={showKey ? "text" : "password"}
               autoFocus
               value={k}
-              onChange={(e) => setK(e.target.value)}
+              onChange={(e) => setK(e.target.value.slice(0, 100))}
+              onPaste={(e) => {
+                const pasted = e.clipboardData.getData("text");
+                if (pasted.length > 100) {
+                  e.preventDefault();
+                  setK(pasted.slice(0, 100).trim());
+                  showToast.warning(
+                    "Pasted text was longer than 100 characters — trimmed to fit. Verify the key looks right.",
+                  );
+                }
+              }}
+              maxLength={100}
               placeholder="Paste your team key"
               spellCheck={false}
               autoComplete="off"
               disabled={busy}
               className="input w-full pl-9 pr-11 font-mono py-3 text-sm focus:ring-2 focus:ring-brand/40"
             />
+            <div className="flex items-center justify-between mt-1.5 text-[10px] text-ink-dim font-mono">
+              <span>{k.length}/100</span>
+              {k.length === 100 && <span className="text-warn">at limit</span>}
+            </div>
             <button
               type="button"
               tabIndex={-1}
@@ -402,16 +411,12 @@ function LiveClock() {
 function BackgroundFX() {
   return (
     <>
-      <motion.div
+      <div
         aria-hidden
-        animate={{ x: [0, 30, -20, 0], y: [0, -20, 30, 0] }}
-        transition={{ duration: 24, repeat: Infinity, ease: "easeInOut" }}
         className="absolute top-1/3 right-[-6rem] w-[26rem] h-[26rem] rounded-full bg-sky-500/10 blur-3xl pointer-events-none"
       />
-      <motion.div
+      <div
         aria-hidden
-        animate={{ x: [0, -25, 15, 0], y: [0, 30, -15, 0] }}
-        transition={{ duration: 28, repeat: Infinity, ease: "easeInOut", delay: 4 }}
         className="absolute bottom-[-6rem] right-[-2rem] w-[22rem] h-[22rem] rounded-full bg-violet-500/10 blur-3xl pointer-events-none"
       />
     </>

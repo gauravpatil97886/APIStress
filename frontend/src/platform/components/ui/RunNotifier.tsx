@@ -62,7 +62,7 @@ function showCompletionToast(r: Run, openReport: () => void) {
   const reqs = r.summary?.totals?.requests;
   const errRate = r.summary?.error_rate;
 
-  toast.custom(
+  const id = toast.custom(
     (t) => (
       <motion.div
         initial={{ opacity: 0, x: 30, scale: 0.96 }}
@@ -110,4 +110,6 @@ function showCompletionToast(r: Run, openReport: () => void) {
     ),
     { duration: 12000, position: "top-right" }
   );
+  setTimeout(() => toast.dismiss(id), 12000);
+  setTimeout(() => toast.remove(id), 12600);
 }
