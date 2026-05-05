@@ -1,5 +1,7 @@
 package main
 
+// ./scripts/dev.sh
+
 import (
 	"context"
 	"encoding/json"
@@ -17,17 +19,17 @@ import (
 
 	"github.com/choicetechlab/choicehammer/internal/platform/activity"
 	"github.com/choicetechlab/choicehammer/internal/platform/api"
-	"github.com/choicetechlab/choicehammer/internal/platform/handlers"
 	"github.com/choicetechlab/choicehammer/internal/platform/config"
-	"github.com/choicetechlab/choicehammer/internal/tools/apistress/engine"
+	"github.com/choicetechlab/choicehammer/internal/platform/handlers"
 	"github.com/choicetechlab/choicehammer/internal/platform/jira"
-	"github.com/choicetechlab/choicehammer/internal/tools/kavach"
 	"github.com/choicetechlab/choicehammer/internal/platform/logger"
+	"github.com/choicetechlab/choicehammer/internal/platform/storage"
+	"github.com/choicetechlab/choicehammer/internal/platform/teams"
+	"github.com/choicetechlab/choicehammer/internal/tools/apistress/engine"
 	"github.com/choicetechlab/choicehammer/internal/tools/apistress/metrics"
 	"github.com/choicetechlab/choicehammer/internal/tools/apistress/protocols"
 	"github.com/choicetechlab/choicehammer/internal/tools/apistress/report"
-	"github.com/choicetechlab/choicehammer/internal/platform/storage"
-	"github.com/choicetechlab/choicehammer/internal/platform/teams"
+	"github.com/choicetechlab/choicehammer/internal/tools/kavach"
 )
 
 func main() {
@@ -160,10 +162,10 @@ func autoAttachOnFinish(ctx context.Context, mr *engine.ManagedRun, pool *pgxpoo
 			ResourceType: "run",
 			ResourceID:   mr.ID,
 			Meta: map[string]interface{}{
-				"jira_id":  jiraID,
-				"reason":   reason,
-				"error":    fmt.Sprintf("%v", err),
-				"phase":    "auto_attach_on_finish",
+				"jira_id": jiraID,
+				"reason":  reason,
+				"error":   fmt.Sprintf("%v", err),
+				"phase":   "auto_attach_on_finish",
 			},
 		})
 	}
