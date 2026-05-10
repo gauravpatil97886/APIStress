@@ -111,6 +111,10 @@ func (h *TestsHandler) Update(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	if err := body.Config.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 	team := middleware.TeamID(c)
 	cfgJSON, _ := json.Marshal(body.Config)
 	tag, err := h.DB.Exec(c.Request.Context(),

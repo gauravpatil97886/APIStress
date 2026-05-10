@@ -14,10 +14,10 @@ type Executor interface {
 // VU represents a single virtual user goroutine.
 // It loops sending requests until context is cancelled.
 type VU struct {
-	ID       int
-	Exec     Executor
-	Results  chan<- Result
-	ThinkMs  int
+	ID      int
+	Exec    Executor
+	Results chan<- Result
+	ThinkMs int
 }
 
 func (v *VU) Run(ctx context.Context) {
@@ -31,8 +31,6 @@ func (v *VU) Run(ctx context.Context) {
 		case v.Results <- res:
 		case <-ctx.Done():
 			return
-		default:
-			// drop result if channel is full to avoid blocking the VU
 		}
 		if v.ThinkMs > 0 {
 			t := time.NewTimer(time.Duration(v.ThinkMs) * time.Millisecond)

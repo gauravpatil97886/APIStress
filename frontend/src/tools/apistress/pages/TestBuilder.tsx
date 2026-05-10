@@ -22,6 +22,10 @@ const PROTOCOLS = [
   { v: "websocket", label: "WebSocket" },
 ];
 
+const MAX_VUS = 500;
+const MAX_DURATION_SEC = 3600;
+const MAX_THINK_MS = 60000;
+
 export default function TestBuilder() {
   const nav = useNavigate();
   const [params] = useSearchParams();
@@ -98,6 +102,27 @@ export default function TestBuilder() {
   const [busy, setBusy] = useState(false);
   const [importFlash, setImportFlash] = useState(false);
   const requestSectionRef: RefObject<HTMLElement> = useRef(null);
+
+  const trimmedURL = url.trim();
+  const profileErrors: string[] = [];
+  if (vus < 1) profileErrors.push("Virtual users must be at least 1.");
+  if (vus > MAX_VUS) profileErrors.push(`Virtual users cannot exceed ${MAX_VUS}.`);
+  if (duration < 1) profileErrors.push("Duration must be at least 1 second.");
+  if (duration > MAX_DURATION_SEC) profileErrors.push(`Duration cannot exceed ${MAX_DURATION_SEC} seconds.`);
+  if (thinkMs < 0) profileErrors.push("Think time cannot be negative.");
+  if (thinkMs > MAX_THINK_MS) profileErrors.push(`Think time cannot exceed ${MAX_THINK_MS} ms.`);
+  if (!curlText.trim() && trimmedURL && !/^https?:\/\//i.test(trimmedURL) && !/^wss?:\/\//i.test(trimmedURL)) {
+    profileErrors.push("URL must start with http://, https://, ws:// or wss://.");
+  }
+  const requestsPerVuPerSec = thinkMs > 0 ? 1000 / thinkMs : null;
+  const estimatedPeakRps = requestsPerVuPerSec ? Math.round(vus * requestsPerVuPerSec) : null;
+  const totalVuSeconds = vus * duration;
+  const canStart = !busy &&
+    !!createdBy.trim() &&
+    !!jiraID.trim() &&
+    !!envTag &&
+    (!!curlText.trim() || !!trimmedURL) &&
+    profileErrors.length === 0;
 
   useEffect(() => { if (createdBy) setUser(createdBy); }, [createdBy]);
 
@@ -200,9 +225,12 @@ export default function TestBuilder() {
     if (!jiraID.trim()) return toast.error("Please enter the Jira ticket ID (e.g. CT-1234).");
     if (!envTag) return toast.error("Pick the environment you're hitting (Production / Broking / UAT).");
     if (!curlText.trim() && !url.trim()) return toast.error("Paste a curl command or fill in the target URL.");
-    const finalURL = url.trim();
+    const finalURL = trimmedURL;
     if (!curlText.trim() && finalURL && !/^https?:\/\//i.test(finalURL) && !/^wss?:\/\//i.test(finalURL)) {
       return toast.error("URL must start with http://, https://, ws:// or wss://");
+    }
+    if (vus > MAX_VUS) {
+      return toast.error(`Virtual users cannot exceed ${MAX_VUS}`);
     }
     setBusy(true);
     try {
@@ -411,15 +439,62 @@ export default function TestBuilder() {
             <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className="label">Virtual Users</label>
-                <input type="number" min={1} className="input w-full" value={vus} onChange={(e) => setVus(+e.target.value)} />
+                <input
+                  type="number"
+                  min={1}
+                  max={MAX_VUS}
+                  className={`input w-full ${vus > MAX_VUS ? "ring-1 ring-bad/50 border-bad/40" : ""}`}
+                  value={vus}
+                  onChange={(e) => setVus(Number(e.target.value))}
+                />
+                <div className="mt-1 text-[11px] text-ink-muted">Hard limit: {MAX_VUS} VUs</div>
               </div>
               <div>
                 <label className="label">Duration (s)</label>
-                <input type="number" min={1} className="input w-full" value={duration} onChange={(e) => setDuration(+e.target.value)} />
+                <input
+                  type="number"
+                  min={1}
+                  max={MAX_DURATION_SEC}
+                  className="input w-full"
+                  value={duration}
+                  onChange={(e) => setDuration(Number(e.target.value))}
+                />
               </div>
               <div>
                 <label className="label">Think time (ms)</label>
-                <input type="number" min={0} className="input w-full" value={thinkMs} onChange={(e) => setThinkMs(+e.target.value)} />
+                <input
+                  type="number"
+                  min={0}
+                  max={MAX_THINK_MS}
+                  className="input w-full"
+                  value={thinkMs}
+                  onChange={(e) => setThinkMs(Number(e.target.value))}
+                />
+              </div>
+            </div>
+            {profileErrors.length > 0 && (
+              <div className="rounded-xl border border-bad/30 bg-bad/[.06] px-3 py-2 text-xs text-bad space-y-1">
+                {profileErrors.map((err) => <div key={err}>{err}</div>)}
+              </div>
+            )}
+            <div className="grid sm:grid-cols-3 gap-3 text-xs">
+              <div className="rounded-xl bg-bg-card ring-1 ring-bg-border px-3 py-2">
+                <div className="text-ink-dim uppercase tracking-wider text-[10px] font-mono">Peak load</div>
+                <div className="mt-1 font-semibold text-ink">
+                  {vus.toLocaleString()} concurrent users
+                </div>
+              </div>
+              <div className="rounded-xl bg-bg-card ring-1 ring-bg-border px-3 py-2">
+                <div className="text-ink-dim uppercase tracking-wider text-[10px] font-mono">VU-seconds</div>
+                <div className="mt-1 font-semibold text-ink">
+                  {Math.max(0, totalVuSeconds).toLocaleString()}
+                </div>
+              </div>
+              <div className="rounded-xl bg-bg-card ring-1 ring-bg-border px-3 py-2">
+                <div className="text-ink-dim uppercase tracking-wider text-[10px] font-mono">Approx peak RPS</div>
+                <div className="mt-1 font-semibold text-ink">
+                  {estimatedPeakRps !== null ? estimatedPeakRps.toLocaleString() : "Unlimited by think time"}
+                </div>
               </div>
             </div>
             <div>
@@ -499,12 +574,17 @@ export default function TestBuilder() {
           </section>
 
           <section className="card p-5 space-y-3">
-            <button onClick={start} disabled={busy} className="btn-primary w-full py-2.5">
+            <button onClick={start} disabled={!canStart} className="btn-primary w-full py-2.5 disabled:opacity-50 disabled:cursor-not-allowed">
               {busy ? "Starting…" : (<>Start load test <ChevronRight className="w-4 h-4" /></>)}
             </button>
             <button onClick={saveOnly} className="btn-secondary w-full">
               <Save className="w-4 h-4" />Save without running
             </button>
+            {!canStart && (
+              <div className="text-[11px] text-ink-muted">
+                Fill the required attribution fields and fix the load-profile validation before starting.
+              </div>
+            )}
           </section>
         </aside>
       </div>

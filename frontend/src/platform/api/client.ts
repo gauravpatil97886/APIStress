@@ -152,10 +152,20 @@ export const api = {
   pwListWorkspaces: () => req<any[]>(`/api/postwomen/workspaces`),
   pwCreateWorkspace: (name: string) =>
     req<{ id: string }>(`/api/postwomen/workspaces`, { method: "POST", body: JSON.stringify({ name }) }),
+  pwRenameWorkspace: (id: string, name: string) =>
+    req<void>(`/api/postwomen/workspaces/${id}`, { method: "PATCH", body: JSON.stringify({ name }) }),
   pwDeleteWorkspace: (id: string) =>
     req<void>(`/api/postwomen/workspaces/${id}`, { method: "DELETE" }),
   pwTree: (workspaceID: string) =>
     req<{ collections: any[]; requests: any[] }>(`/api/postwomen/workspaces/${workspaceID}/tree`),
+  pwListEnvironments: (workspaceID: string) =>
+    req<any[]>(`/api/postwomen/workspaces/${workspaceID}/environments`),
+  pwCreateEnvironment: (workspaceID: string, b: any) =>
+    req<{ id: string }>(`/api/postwomen/workspaces/${workspaceID}/environments`, { method: "POST", body: JSON.stringify(b) }),
+  pwUpdateEnvironment: (id: string, b: any) =>
+    req<void>(`/api/postwomen/environments/${id}`, { method: "PUT", body: JSON.stringify(b) }),
+  pwDeleteEnvironment: (id: string) =>
+    req<void>(`/api/postwomen/environments/${id}`, { method: "DELETE" }),
   pwCreateCollection: (b: any) =>
     req<{ id: string }>(`/api/postwomen/collections`, { method: "POST", body: JSON.stringify(b) }),
   pwRenameCollection: (id: string, name: string) =>
@@ -168,7 +178,7 @@ export const api = {
     req<void>(`/api/postwomen/requests/${id}`, { method: "PUT", body: JSON.stringify(b) }),
   pwDeleteRequest: (id: string) =>
     req<void>(`/api/postwomen/requests/${id}`, { method: "DELETE" }),
-  pwSend: (request: any, vars: Record<string, string> = {}, opts?: { saveHistory?: boolean }) =>
+  pwSend: (request: any, vars: Record<string, string> = {}, opts?: { saveHistory?: boolean; envTag?: string }) =>
     req<any>(`/api/postwomen/send`, {
       method: "POST",
       body: JSON.stringify({
@@ -176,6 +186,7 @@ export const api = {
         // default true to preserve the existing single-send behaviour;
         // the Runner passes false at lakh-scale to skip pw_history writes.
         save_history: opts?.saveHistory ?? true,
+        env_tag: opts?.envTag ?? "",
       }),
     }),
   pwImport: (workspaceID: string, body: string) =>
@@ -185,7 +196,14 @@ export const api = {
     }),
   pwExportURL: (collectionID: string) =>
     `${BASE}/api/postwomen/export/${collectionID}?key=${encodeURIComponent(getKey())}`,
-  pwHistory: () => req<any[]>(`/api/postwomen/history`),
+  pwHistory: (params: { q?: string; env_tag?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set("q", params.q);
+    if (params.env_tag) qs.set("env_tag", params.env_tag);
+    return req<any[]>(`/api/postwomen/history${qs.toString() ? `?${qs.toString()}` : ""}`);
+  },
+  pwSearch: (workspaceID: string, q: string) =>
+    req<any[]>(`/api/postwomen/search?workspace_id=${encodeURIComponent(workspaceID)}&q=${encodeURIComponent(q)}`),
 
   // Activity logger — fires events to populate the admin's audit feed.
   // Best-effort: never let a logging failure break a real user flow.

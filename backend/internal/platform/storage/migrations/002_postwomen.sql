@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS pw_environments (
     values        JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE INDEX IF NOT EXISTS idx_pw_env_workspace ON pw_environments(workspace_id);
 
 CREATE TABLE IF NOT EXISTS pw_history (
     id                BIGSERIAL PRIMARY KEY,
@@ -58,8 +59,10 @@ CREATE TABLE IF NOT EXISTS pw_history (
     status            INT,
     duration_ms       INT,
     response_bytes    BIGINT,
+    env_tag           TEXT NOT NULL DEFAULT '',
     request_snapshot  JSONB,
     response_snapshot JSONB,
     ran_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_pw_history_ran_at ON pw_history(ran_at DESC);
+ALTER TABLE pw_history ADD COLUMN IF NOT EXISTS env_tag TEXT NOT NULL DEFAULT '';

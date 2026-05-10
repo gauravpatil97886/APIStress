@@ -11,9 +11,9 @@ import (
 	"github.com/choicetechlab/choicehammer/internal/platform/activity"
 	"github.com/choicetechlab/choicehammer/internal/platform/api/middleware"
 	"github.com/choicetechlab/choicehammer/internal/platform/curl"
-	"github.com/choicetechlab/choicehammer/internal/tools/apistress/engine"
 	"github.com/choicetechlab/choicehammer/internal/platform/logger"
 	"github.com/choicetechlab/choicehammer/internal/platform/security"
+	"github.com/choicetechlab/choicehammer/internal/tools/apistress/engine"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
@@ -82,6 +82,10 @@ func (h *RunsHandler) Start(c *gin.Context) {
 		if cfg.Protocol == "" {
 			cfg.Protocol = engine.ProtoHTTP
 		}
+	}
+	if err := cfg.Validate(); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
 	}
 
 	if strings.TrimSpace(body.CreatedBy) == "" {
@@ -152,10 +156,10 @@ func (h *RunsHandler) Start(c *gin.Context) {
 			ResourceType: "run",
 			ResourceID:   mr.ID,
 			Meta: map[string]interface{}{
-				"name":     cfg.Name,
-				"vus":      cfg.VUs,
-				"jira":     body.JiraID,
-				"env":      envTag,
+				"name": cfg.Name,
+				"vus":  cfg.VUs,
+				"jira": body.JiraID,
+				"env":  envTag,
 			},
 			IP: c.ClientIP(),
 			UA: c.GetHeader("User-Agent"),

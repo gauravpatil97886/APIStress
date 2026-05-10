@@ -88,6 +88,15 @@ const PREVIEW_HEIGHT = 360;
 const RESULTS_ROW_H = 28;
 const RESULTS_HEIGHT = 320;
 
+function suggestConcurrency(rowCount: number): number {
+  if (rowCount >= 100_000) return 10;
+  if (rowCount >= 25_000) return 8;
+  if (rowCount >= 5_000) return 6;
+  if (rowCount >= 1_000) return 4;
+  if (rowCount >= 100) return 2;
+  return 1;
+}
+
 // ─── Variable + macro substitution ───────────────────────────────────────
 function macroValue(name: string): string {
   const n = name.trim();
@@ -216,10 +225,15 @@ function parseInWorker(
 type Props = {
   requests: any[];
   initialReq?: any;
+  activeReq?: any;
+  baseVars?: Record<string, string>;
+  envTag?: string;
+  onOpenRequest?: (req: any) => void;
+  onCreateScratchRequest?: (req: any) => void;
   onExit?: () => void;
 };
 
-export default function Runner({ requests, initialReq, onExit }: Props) {
+export default function Runner({ requests, initialReq, activeReq, baseVars = {}, envTag = "", onOpenRequest, onCreateScratchRequest, onExit }: Props) {
   const [selReqID, setSelReqID] = useState<string | "">(initialReq?.id ?? requests[0]?.id ?? "");
   const selectedReq = useMemo(
     () => requests.find(r => r.id === selReqID) || null,
@@ -258,10 +272,23 @@ export default function Runner({ requests, initialReq, onExit }: Props) {
     return () => clearTimeout(t);
   }, [search]);
 
+  useEffect(() => {
+    if (activeReq?.id && requests.some((r) => r.id === activeReq.id)) {
+      setSelReqID(activeReq.id);
+      return;
+    }
+    if (selReqID && requests.some((r) => r.id === selReqID)) return;
+    setSelReqID(requests[0]?.id ?? "");
+  }, [activeReq?.id, requests, selReqID]);
+
   // Derived: just the *count* of enabled rows. We never materialise the list
   // for huge datasets because building it on every toggle would be O(n).
   const enabledRowCount = enabledRows.size;
   const totalRowCount = dataset?.rows.length ?? 0;
+  const suggestedConcurrency = useMemo(
+    () => suggestConcurrency(totalRowCount),
+    [totalRowCount]
+  );
 
   const effectiveIterations = useMemo(() => {
     if (!enabledRowCount) return 0;
@@ -311,6 +338,7 @@ export default function Runner({ requests, initialReq, onExit }: Props) {
       });
       // Default everything enabled.
       setEnabledCols(Object.fromEntries(parsed.columns.map(c => [c, true])));
+      setSettings((s) => ({ ...s, concurrency: suggestConcurrency(parsed.rows.length) }));
       // Build the Set as an array → Set in one shot (faster than per-row .add).
       const indices = new Array(parsed.rows.length);
       for (let i = 0; i < parsed.rows.length; i++) indices[i] = i;
@@ -346,6 +374,7 @@ export default function Runner({ requests, initialReq, onExit }: Props) {
         activeSheet: parsed.activeSheet || sheet,
       });
       setEnabledCols(Object.fromEntries(parsed.columns.map(c => [c, true])));
+      setSettings((s) => ({ ...s, concurrency: suggestConcurrency(parsed.rows.length) }));
       const indices = new Array(parsed.rows.length);
       for (let i = 0; i < parsed.rows.length; i++) indices[i] = i;
       setEnabledRows(new Set(indices));
@@ -398,11 +427,11 @@ export default function Runner({ requests, initialReq, onExit }: Props) {
         if (idxIntoList >= rowIndices.length) break;
         const dataIx = rowIndices[idxIntoList];
         const row = dataset!.rows[dataIx];
-        const vars = rowVars(row);
+        const vars = { ...baseVars, ...rowVars(row) };
         const resolved = resolveRequest(selectedReq, vars);
         const t0 = performance.now();
         try {
-          const r = await api.pwSend(resolved, vars as Record<string, string>, { saveHistory });
+          const r = await api.pwSend(resolved, vars as Record<string, string>, { saveHistory, envTag });
           const dur = Math.round(performance.now() - t0);
           const ok = passes(Number(r?.status ?? 0), settings.passRule);
           buf.push({
@@ -581,6 +610,16 @@ export default function Runner({ requests, initialReq, onExit }: Props) {
           </select>
         )}
 
+        {selectedReq && onOpenRequest && (
+          <button
+            onClick={() => onOpenRequest(selectedReq)}
+            className="btn-ghost text-xs"
+            title="Open this saved request in the editor"
+          >
+            <Eye className="w-3.5 h-3.5" /> Open request
+          </button>
+        )}
+
         <div className="flex-1" />
 
         {results.length > 0 && (
@@ -653,13 +692,27 @@ export default function Runner({ requests, initialReq, onExit }: Props) {
             />
           </Field>
           <Field label="Concurrency">
-            <input
-              type="number" min={1} max={10} step={1}
-              value={settings.concurrency}
-              onChange={(e) => setSettings(s => ({ ...s, concurrency: Math.min(10, Math.max(1, Number(e.target.value) || 1)) }))}
-              className="input w-full text-xs py-1"
-              title="1–10 parallel iterations"
-            />
+            <div className="space-y-1">
+              <input
+                type="number" min={1} max={10} step={1}
+                value={settings.concurrency}
+                onChange={(e) => setSettings(s => ({ ...s, concurrency: Math.min(10, Math.max(1, Number(e.target.value) || 1)) }))}
+                className="input w-full text-xs py-1"
+                title="1–10 parallel iterations"
+              />
+              <div className="flex items-center justify-between gap-2 text-[10px] text-ink-dim font-mono">
+                <span>auto: {suggestedConcurrency}</span>
+                {dataset && settings.concurrency !== suggestedConcurrency && (
+                  <button
+                    type="button"
+                    onClick={() => setSettings(s => ({ ...s, concurrency: suggestedConcurrency }))}
+                    className="text-sky-300 hover:text-sky-200"
+                  >
+                    reset auto
+                  </button>
+                )}
+              </div>
+            </div>
           </Field>
           <Field label="Pass rule">
             <PassRuleEditor value={settings.passRule} onChange={(passRule) => setSettings(s => ({ ...s, passRule }))} />
@@ -787,6 +840,7 @@ export default function Runner({ requests, initialReq, onExit }: Props) {
                 row={dataset.rows[previewIx]}
                 enabledCols={enabledCols}
                 rowIx={previewIx}
+                onOpenResolved={onCreateScratchRequest}
               />
             )}
           </>
@@ -827,6 +881,7 @@ export default function Runner({ requests, initialReq, onExit }: Props) {
           <InspectorPanel
             result={results[inspectIx]}
             onClose={() => setInspectIx(null)}
+            onOpenResolved={onCreateScratchRequest}
           />
         )}
       </div>
@@ -1032,8 +1087,14 @@ function VirtualSpreadsheet({
 }
 
 function VarPreview({
-  request, row, enabledCols, rowIx,
-}: { request: any; row: Row; enabledCols: Record<string, boolean>; rowIx: number }) {
+  request, row, enabledCols, rowIx, onOpenResolved,
+}: {
+  request: any;
+  row: Row;
+  enabledCols: Record<string, boolean>;
+  rowIx: number;
+  onOpenResolved?: (req: any) => void;
+}) {
   const [open, setOpen] = useState(true);
   const vars: Row = {};
   for (const k in row) if (enabledCols[k]) vars[k] = row[k];
@@ -1051,6 +1112,19 @@ function VarPreview({
       </button>
       {open && (
         <div className="p-3 space-y-2 text-xs font-mono">
+          {onOpenResolved && (
+            <div className="flex justify-end">
+              <button
+                onClick={() => onOpenResolved({
+                  ...resolved,
+                  name: `${request.name || "Request"} · row ${rowIx + 1}`,
+                })}
+                className="btn-ghost text-xs"
+              >
+                <Eye className="w-3.5 h-3.5" /> Open resolved row in editor
+              </button>
+            </div>
+          )}
           <div>
             <span className="text-ink-dim">URL:</span>{" "}
             <span className="text-ink break-all">{resolved.url}</span>
@@ -1144,7 +1218,13 @@ function VirtualResults({ results, onInspect }: { results: RunResult[]; onInspec
   );
 }
 
-function InspectorPanel({ result, onClose }: { result: RunResult; onClose: () => void }) {
+function InspectorPanel({
+  result, onClose, onOpenResolved,
+}: {
+  result: RunResult;
+  onClose: () => void;
+  onOpenResolved?: (req: any) => void;
+}) {
   return (
     <div className="card">
       <div className="px-3 py-2 border-b border-bg-border flex items-center gap-2">
@@ -1154,6 +1234,17 @@ function InspectorPanel({ result, onClose }: { result: RunResult; onClose: () =>
           {result.ok ? "PASS" : "FAIL"} · {result.status || "—"} · {result.durationMs}ms
         </span>
         <div className="flex-1" />
+        {onOpenResolved && (
+          <button
+            onClick={() => onOpenResolved({
+              ...result.resolvedRequest,
+              name: `Runner result · row ${result.index + 1}`,
+            })}
+            className="btn-ghost text-xs"
+          >
+            <Eye className="w-3.5 h-3.5" /> Open in editor
+          </button>
+        )}
         <button onClick={onClose} className="text-ink-muted hover:text-ink"><X className="w-4 h-4" /></button>
       </div>
       <div className="p-3 grid md:grid-cols-2 gap-3 text-xs font-mono">

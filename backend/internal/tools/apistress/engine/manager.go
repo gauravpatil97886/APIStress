@@ -28,8 +28,8 @@ type ManagedRun struct {
 	Meta      RunMeta
 	cancel    context.CancelFunc
 
-	mu    sync.RWMutex
-	subs  map[*LiveSubscriber]struct{}
+	mu   sync.RWMutex
+	subs map[*LiveSubscriber]struct{}
 }
 
 func (m *ManagedRun) Subscribe() *LiveSubscriber {
@@ -95,12 +95,12 @@ func newID() string {
 }
 
 type RunMeta struct {
-	CreatedBy      string                 `json:"created_by"`
-	JiraID         string                 `json:"jira_id"`
-	JiraLink       string                 `json:"jira_link"`
-	Notes          string                 `json:"notes"`
-	EnvTag         string                 `json:"env_tag"`     // Production, Broking, UAT
-	CostInputs     map[string]interface{} `json:"cost_inputs"` // raw cost.Inputs as JSON
+	CreatedBy  string                 `json:"created_by"`
+	JiraID     string                 `json:"jira_id"`
+	JiraLink   string                 `json:"jira_link"`
+	Notes      string                 `json:"notes"`
+	EnvTag     string                 `json:"env_tag"`     // Production, Broking, UAT
+	CostInputs map[string]interface{} `json:"cost_inputs"` // raw cost.Inputs as JSON
 	// AutoAttachJira: when true and Jira integration is configured, the
 	// run-finished hook auto-uploads the PDF + posts a summary comment
 	// without the operator having to click anything on the report page.
@@ -239,6 +239,9 @@ func (m *Manager) Start(ctx context.Context, cfg *TestConfig, testID string, met
 				hook(context.Background(), mr)
 			}()
 		}
+		m.mu.Lock()
+		delete(m.runs, id)
+		m.mu.Unlock()
 	}()
 	return mr, nil
 }

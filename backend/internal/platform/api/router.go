@@ -113,11 +113,16 @@ func New(cfg *config.Config, db *pgxpool.Pool, mgr *engine.Manager, teamSvc *tea
 	pw := &pwh.Handler{DB: db}
 	protected.GET("/postwomen/workspaces",        pw.ListWorkspaces)
 	protected.POST("/postwomen/workspaces",       pw.CreateWorkspace)
+	protected.PATCH("/postwomen/workspaces/:id",  pw.RenameWorkspace)
 	protected.DELETE("/postwomen/workspaces/:id", pw.DeleteWorkspace)
 	protected.GET("/postwomen/workspaces/:id/tree", pw.Tree)
+	protected.GET("/postwomen/workspaces/:id/environments", pw.ListEnvironments)
+	protected.POST("/postwomen/workspaces/:id/environments", pw.CreateEnvironment)
 	protected.POST("/postwomen/collections",        pw.CreateCollection)
 	protected.PATCH("/postwomen/collections/:id",   pw.RenameCollection)
 	protected.DELETE("/postwomen/collections/:id",  pw.DeleteCollection)
+	protected.PUT("/postwomen/environments/:id",  pw.UpdateEnvironment)
+	protected.DELETE("/postwomen/environments/:id", pw.DeleteEnvironment)
 	protected.POST("/postwomen/requests",      pw.CreateRequest)
 	protected.PUT("/postwomen/requests/:id",   pw.UpdateRequest)
 	protected.DELETE("/postwomen/requests/:id",pw.DeleteRequest)
@@ -125,6 +130,7 @@ func New(cfg *config.Config, db *pgxpool.Pool, mgr *engine.Manager, teamSvc *tea
 	protected.POST("/postwomen/import",        pw.Import)
 	protected.GET("/postwomen/export/:id",     pw.Export)
 	protected.GET("/postwomen/history",        pw.History)
+	protected.GET("/postwomen/search",         pw.Search)
 
 	cost := &ash.CostHandler{}
 	protected.GET("/cost/pricing", cost.Pricing)

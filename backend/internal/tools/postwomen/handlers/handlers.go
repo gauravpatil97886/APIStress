@@ -21,6 +21,14 @@ type Handler struct {
 	DB *pgxpool.Pool
 }
 
+type envRow struct {
+	ID          string            `json:"id"`
+	WorkspaceID string            `json:"workspace_id"`
+	Name        string            `json:"name"`
+	Values      map[string]string `json:"values"`
+	CreatedAt   time.Time         `json:"created_at"`
+}
+
 func newID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
@@ -130,6 +138,27 @@ func (h *Handler) CreateWorkspace(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"id": id})
 }
 
+func (h *Handler) RenameWorkspace(c *gin.Context) {
+	var b struct {
+		Name string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil || strings.TrimSpace(b.Name) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace name required"})
+		return
+	}
+	team := middleware.TeamID(c)
+	if !h.workspaceOwnedBy(c, c.Param("id"), team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+		return
+	}
+	if _, err := h.DB.Exec(c.Request.Context(),
+		`UPDATE pw_workspaces SET name=$1, updated_at=NOW() WHERE id=$2`, strings.TrimSpace(b.Name), c.Param("id")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 func (h *Handler) DeleteWorkspace(c *gin.Context) {
 	team := middleware.TeamID(c)
 	if !h.workspaceOwnedBy(c, c.Param("id"), team) {
@@ -167,6 +196,119 @@ func (h *Handler) Tree(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"collections": cols, "requests": reqs})
+}
+
+func (h *Handler) ListEnvironments(c *gin.Context) {
+	wsID := c.Param("id")
+	team := middleware.TeamID(c)
+	if !h.workspaceOwnedBy(c, wsID, team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+		return
+	}
+	rows, err := h.DB.Query(c.Request.Context(),
+		`SELECT id, workspace_id, name, values, created_at
+		   FROM pw_environments WHERE workspace_id=$1 ORDER BY name, created_at`, wsID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	out := []envRow{}
+	for rows.Next() {
+		var e envRow
+		var valuesRaw []byte
+		if err := rows.Scan(&e.ID, &e.WorkspaceID, &e.Name, &valuesRaw, &e.CreatedAt); err != nil {
+			continue
+		}
+		_ = json.Unmarshal(valuesRaw, &e.Values)
+		if e.Values == nil {
+			e.Values = map[string]string{}
+		}
+		out = append(out, e)
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h *Handler) CreateEnvironment(c *gin.Context) {
+	wsID := c.Param("id")
+	team := middleware.TeamID(c)
+	if !h.workspaceOwnedBy(c, wsID, team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+		return
+	}
+	var b struct {
+		Name   string            `json:"name"`
+		Values map[string]string `json:"values"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil || strings.TrimSpace(b.Name) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "environment name required"})
+		return
+	}
+	if b.Values == nil {
+		b.Values = map[string]string{}
+	}
+	id := newID()
+	valuesJSON, _ := json.Marshal(b.Values)
+	if _, err := h.DB.Exec(c.Request.Context(),
+		`INSERT INTO pw_environments (id, workspace_id, name, values) VALUES ($1, $2, $3, $4)`,
+		id, wsID, strings.TrimSpace(b.Name), valuesJSON); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"id": id})
+}
+
+func (h *Handler) UpdateEnvironment(c *gin.Context) {
+	var b struct {
+		Name   string            `json:"name"`
+		Values map[string]string `json:"values"`
+	}
+	if err := c.ShouldBindJSON(&b); err != nil || strings.TrimSpace(b.Name) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "environment name required"})
+		return
+	}
+	var wsID string
+	if err := h.DB.QueryRow(c.Request.Context(),
+		`SELECT workspace_id FROM pw_environments WHERE id=$1`, c.Param("id")).Scan(&wsID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "environment not found"})
+		return
+	}
+	team := middleware.TeamID(c)
+	if !h.workspaceOwnedBy(c, wsID, team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "environment not found"})
+		return
+	}
+	if b.Values == nil {
+		b.Values = map[string]string{}
+	}
+	valuesJSON, _ := json.Marshal(b.Values)
+	if _, err := h.DB.Exec(c.Request.Context(),
+		`UPDATE pw_environments SET name=$1, values=$2 WHERE id=$3`,
+		strings.TrimSpace(b.Name), valuesJSON, c.Param("id")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (h *Handler) DeleteEnvironment(c *gin.Context) {
+	var wsID string
+	if err := h.DB.QueryRow(c.Request.Context(),
+		`SELECT workspace_id FROM pw_environments WHERE id=$1`, c.Param("id")).Scan(&wsID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "environment not found"})
+		return
+	}
+	team := middleware.TeamID(c)
+	if !h.workspaceOwnedBy(c, wsID, team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "environment not found"})
+		return
+	}
+	if _, err := h.DB.Exec(c.Request.Context(),
+		`DELETE FROM pw_environments WHERE id=$1`, c.Param("id")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
 }
 
 func (h *Handler) queryCollections(c *gin.Context, wsID string) ([]pw.Collection, error) {
@@ -391,6 +533,7 @@ func (h *Handler) Send(c *gin.Context) {
 		Request     pw.Request        `json:"request"`
 		Vars        map[string]string `json:"vars"`
 		SaveHistory *bool             `json:"save_history"` // nil → default true
+		EnvTag      string            `json:"env_tag"`
 	}
 	if err := c.ShouldBindJSON(&b); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -421,10 +564,10 @@ func (h *Handler) Send(c *gin.Context) {
 		}
 		_, _ = h.DB.Exec(c.Request.Context(),
 			`INSERT INTO pw_history (request_id, method, url, status, duration_ms, response_bytes,
-			                          request_snapshot, response_snapshot, team_id)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+			                          env_tag, request_snapshot, response_snapshot, team_id)
+			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
 			reqIDArg, b.Request.Method, b.Request.URL, res.Status,
-			res.DurationMs, res.SizeBytes, reqSnap, respSnap, teamArg)
+			res.DurationMs, res.SizeBytes, strings.TrimSpace(b.EnvTag), reqSnap, respSnap, teamArg)
 	}
 
 	c.JSON(http.StatusOK, res)
@@ -593,31 +736,110 @@ func sanitizeFilename(s string) string {
 // ── History ─────────────────────────────────────────────────────────────
 func (h *Handler) History(c *gin.Context) {
 	team := middleware.TeamID(c)
+	where := `WHERE team_id=$1`
+	args := []any{team}
+	if envTag := strings.TrimSpace(c.Query("env_tag")); envTag != "" {
+		args = append(args, envTag)
+		where += fmt.Sprintf(" AND env_tag=$%d", len(args))
+	}
+	if q := strings.TrimSpace(c.Query("q")); q != "" {
+		args = append(args, "%"+q+"%")
+		where += fmt.Sprintf(" AND (url ILIKE $%d OR method ILIKE $%d OR env_tag ILIKE $%d)", len(args), len(args), len(args))
+	}
 	rows, err := h.DB.Query(c.Request.Context(),
-		`SELECT method, url, status, duration_ms, response_bytes, ran_at
-		   FROM pw_history WHERE team_id=$1 ORDER BY ran_at DESC LIMIT 50`, team)
+		`SELECT request_id, method, url, status, duration_ms, response_bytes,
+		        env_tag, request_snapshot, response_snapshot, ran_at
+		   FROM pw_history `+where+` ORDER BY ran_at DESC LIMIT 100`, args...)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	defer rows.Close()
 	type item struct {
-		Method        string `json:"method"`
-		URL           string `json:"url"`
-		Status        int    `json:"status"`
-		DurationMs    int    `json:"duration_ms"`
-		ResponseBytes int    `json:"response_bytes"`
-		RanAt         string `json:"ran_at"`
+		RequestID     *string        `json:"request_id,omitempty"`
+		Method        string         `json:"method"`
+		URL           string         `json:"url"`
+		Status        int            `json:"status"`
+		DurationMs    int            `json:"duration_ms"`
+		ResponseBytes int            `json:"response_bytes"`
+		EnvTag        string         `json:"env_tag"`
+		Request       *pw.Request    `json:"request,omitempty"`
+		Response      *pw.SendResult `json:"response,omitempty"`
+		RanAt         string         `json:"ran_at"`
 	}
 	out := []item{}
 	for rows.Next() {
 		var i item
 		var t time.Time
-		if err := rows.Scan(&i.Method, &i.URL, &i.Status, &i.DurationMs, &i.ResponseBytes, &t); err != nil {
+		var reqID *string
+		var reqSnap, respSnap []byte
+		if err := rows.Scan(&reqID, &i.Method, &i.URL, &i.Status, &i.DurationMs, &i.ResponseBytes, &i.EnvTag, &reqSnap, &respSnap, &t); err != nil {
 			continue
+		}
+		i.RequestID = reqID
+		if len(reqSnap) > 0 {
+			var req pw.Request
+			if err := json.Unmarshal(reqSnap, &req); err == nil {
+				i.Request = &req
+			}
+		}
+		if len(respSnap) > 0 {
+			var resp pw.SendResult
+			if err := json.Unmarshal(respSnap, &resp); err == nil {
+				i.Response = &resp
+			}
 		}
 		i.RanAt = t.Format(time.RFC3339)
 		out = append(out, i)
+	}
+	c.JSON(http.StatusOK, out)
+}
+
+func (h *Handler) Search(c *gin.Context) {
+	wsID := strings.TrimSpace(c.Query("workspace_id"))
+	q := strings.TrimSpace(c.Query("q"))
+	if wsID == "" || q == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace_id and q required"})
+		return
+	}
+	team := middleware.TeamID(c)
+	if !h.workspaceOwnedBy(c, wsID, team) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+		return
+	}
+	rows, err := h.DB.Query(c.Request.Context(),
+		`SELECT r.id, r.collection_id, r.name, r.method, r.url, r.headers, r.query_params, r.body_kind, r.body, r.auth,
+		        r.tests, r.pre_script, r.position, r.created_at, r.updated_at
+		   FROM pw_requests r
+		   JOIN pw_collections c ON c.id = r.collection_id
+		  WHERE c.workspace_id=$1
+		    AND (r.name ILIKE $2 OR r.url ILIKE $2 OR r.method ILIKE $2)
+		  ORDER BY r.updated_at DESC
+		  LIMIT 100`, wsID, "%"+q+"%")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+	out := []pw.Request{}
+	for rows.Next() {
+		var r pw.Request
+		var coll *string
+		var headers, query, body, auth []byte
+		if err := rows.Scan(&r.ID, &coll, &r.Name, &r.Method, &r.URL, &headers, &query,
+			&r.BodyKind, &body, &auth, &r.Tests, &r.PreScript, &r.Position,
+			&r.CreatedAt, &r.UpdatedAt); err != nil {
+			continue
+		}
+		r.CollectionID = coll
+		_ = json.Unmarshal(headers, &r.Headers)
+		_ = json.Unmarshal(query, &r.Query)
+		_ = json.Unmarshal(body, &r.Body)
+		_ = json.Unmarshal(auth, &r.Auth)
+		if r.Headers == nil {
+			r.Headers = map[string]string{}
+		}
+		out = append(out, r)
 	}
 	c.JSON(http.StatusOK, out)
 }

@@ -36,6 +36,27 @@ type Request = {
   pre_script?: string;
   position?: number;
 };
+type HistoryItem = {
+  request_id?: string;
+  method: string;
+  url: string;
+  status: number;
+  duration_ms: number;
+  response_bytes: number;
+  request?: Request;
+  response?: any;
+  ran_at: string;
+};
+type PWEnvironment = {
+  id: string;
+  workspace_id: string;
+  name: string;
+  values: Record<string, string>;
+  created_at: string;
+};
+
+const ENV_TAGS = ["Production", "Broking", "UAT"] as const;
+type EnvTag = typeof ENV_TAGS[number] | "";
 
 const METHOD_TONE: Record<string, string> = {
   GET:    "text-good",
@@ -80,6 +101,51 @@ function generateCurl(req: Request): string {
   return parts.join(" \\\n");
 }
 
+function cloneRequest(req: Request): Request {
+  return JSON.parse(JSON.stringify(req));
+}
+
+function isScratchRequest(req: Request | null | undefined): boolean {
+  return !!req?.id && (req.id.startsWith("scratch-") || req.id.startsWith("history-"));
+}
+
+function makeScratchRequest(base: Partial<Request> = {}): Request {
+  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return {
+    id: `scratch-${stamp}`,
+    collection_id: null,
+    name: base.name || "Scratch request",
+    method: base.method || "GET",
+    url: base.url || "",
+    headers: base.headers || {},
+    query: base.query || [],
+    body_kind: base.body_kind || "none",
+    body: base.body || {},
+    auth: base.auth || { kind: "none" },
+    tests: base.tests || "",
+    pre_script: base.pre_script || "",
+    position: base.position || 0,
+  };
+}
+
+function promptForEnvSeed(existing?: PWEnvironment): { name: string; values: Record<string, string> } | null {
+  const name = prompt("Environment name:", existing?.name || "Production");
+  if (!name?.trim()) return null;
+  const sample = JSON.stringify(existing?.values || { base_url: "", token: "", user_id: "" }, null, 2);
+  const raw = prompt("Variables as JSON object:", sample);
+  if (raw == null) return null;
+  try {
+    const parsed = JSON.parse(raw || "{}");
+    const values = Object.fromEntries(
+      Object.entries(parsed || {}).map(([k, v]) => [String(k), v == null ? "" : String(v)])
+    );
+    return { name: name.trim(), values };
+  } catch {
+    toast.error("Environment variables must be valid JSON");
+    return null;
+  }
+}
+
 export default function PostWomen() {
   const nav = useNavigate();
   const team = getTeam();
@@ -104,11 +170,15 @@ export default function PostWomen() {
   const [activeWS, setActiveWS] = useState<string>("");
   const [collections, setCollections] = useState<Collection[]>([]);
   const [requests, setRequests] = useState<Request[]>([]);
+  const [envs, setEnvs] = useState<PWEnvironment[]>([]);
+  const [activeEnvId, setActiveEnvId] = useState<string>("");
+  const [envTag, setEnvTag] = useState<EnvTag>("");
   // ── Multi-tab state ──────────────────────────────────────────
   const [openTabs, setOpenTabs] = useState<Request[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [responses, setResponses] = useState<Record<string, any>>({});
   const [savedSnaps, setSavedSnaps] = useState<Record<string, Request>>({});
+  const savedSnapsRef = useRef<Record<string, Request>>({});
 
   const activeReq = useMemo(
     () => openTabs.find((t) => t.id === activeTabId) ?? null,
@@ -116,6 +186,10 @@ export default function PostWomen() {
   );
   const savedReq = activeTabId ? savedSnaps[activeTabId] ?? null : null;
   const response = activeTabId ? responses[activeTabId] ?? null : null;
+
+  useEffect(() => {
+    savedSnapsRef.current = savedSnaps;
+  }, [savedSnaps]);
 
   // Mutator that target the active tab.
   function setActiveReq(next: Request | null) {
@@ -126,15 +200,29 @@ export default function PostWomen() {
     if (!activeTabId) return;
     setResponses((prev) => ({ ...prev, [activeTabId]: r }));
   }
+  function setResponseForTab(id: string, r: any) {
+    setResponses((prev) => ({ ...prev, [id]: r }));
+  }
   function setSavedReq(r: Request | null) {
     if (!activeTabId || !r) return;
     setSavedSnaps((prev) => ({ ...prev, [activeTabId]: r }));
   }
 
   // Open a tab (or focus an already-open one).
-  function openTab(r: Request) {
-    setOpenTabs((prev) => (prev.some((t) => t.id === r.id) ? prev : [...prev, r]));
-    setSavedSnaps((prev) => ({ ...prev, [r.id]: r }));
+  function openTab(r: Request, opts?: { preserveDirty?: boolean }) {
+    const incoming = cloneRequest(r);
+    setOpenTabs((prev) => {
+      const idx = prev.findIndex((t) => t.id === incoming.id);
+      if (idx === -1) return [...prev, incoming];
+      const current = prev[idx];
+      const saved = savedSnapsRef.current[incoming.id];
+      const dirty = saved ? JSON.stringify(saved) !== JSON.stringify(current) : false;
+      if (dirty && opts?.preserveDirty) return prev;
+      const next = prev.slice();
+      next[idx] = incoming;
+      return next;
+    });
+    setSavedSnaps((prev) => ({ ...prev, [incoming.id]: incoming }));
     setActiveTabId(r.id);
   }
   function closeTab(id: string) {
@@ -156,14 +244,25 @@ export default function PostWomen() {
   const [search, setSearch] = useState("");
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [sidebarTab, setSidebarTab] = useState<"collections" | "history">("collections");
-  const [history, setHistory] = useState<any[]>([]);
+  const [sidebarTab, setSidebarTab] = useState<"collections" | "history" | "environments">("collections");
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyEnvTag, setHistoryEnvTag] = useState<EnvTag>("");
   const [mainView, setMainView] = useState<"request" | "runner">("request");
+  const [searchResults, setSearchResults] = useState<Request[] | null>(null);
 
   const isDirty = useMemo(() => {
     if (!activeReq || !savedReq) return false;
     return JSON.stringify(activeReq) !== JSON.stringify(savedReq);
   }, [activeReq, savedReq]);
+  const activeEnv = useMemo(
+    () => envs.find((env) => env.id === activeEnvId) || null,
+    [envs, activeEnvId]
+  );
+  const activeVars = useMemo(
+    () => ({ ...(activeEnv?.values || {}) }),
+    [activeEnv]
+  );
 
   // ── Bootstrap workspaces ─────────────────────────────────────────
   useEffect(() => {
@@ -187,19 +286,64 @@ export default function PostWomen() {
     if (!activeWS) return;
     try {
       const { collections, requests } = await api.pwTree(activeWS);
-      setCollections(collections || []);
-      setRequests(requests || []);
+      const nextCollections = collections || [];
+      const nextRequests = requests || [];
+      setCollections(nextCollections);
+      setRequests(nextRequests);
+      const reqMap = new Map(nextRequests.map((req: Request) => [req.id, req]));
+      setSavedSnaps((prev) => {
+        const next = { ...prev };
+        Object.keys(next).forEach((id) => {
+          const fresh = reqMap.get(id);
+          if (fresh) next[id] = cloneRequest(fresh);
+        });
+        return next;
+      });
+      setOpenTabs((prev) => prev.map((tab) => {
+        const fresh = reqMap.get(tab.id);
+        if (!fresh) return tab;
+        const saved = savedSnapsRef.current[tab.id];
+        const dirty = saved ? JSON.stringify(saved) !== JSON.stringify(tab) : false;
+        return dirty ? tab : cloneRequest(fresh);
+      }));
     } catch (e: any) {
       toast.error(e.message);
     }
   }
   useEffect(() => { reload(); }, [activeWS]);
 
+  async function reloadEnvs() {
+    if (!activeWS) return;
+    try {
+      const list = await api.pwListEnvironments(activeWS);
+      setEnvs(list);
+      setActiveEnvId((prev) => prev && list.some((env: PWEnvironment) => env.id === prev) ? prev : (list[0]?.id || ""));
+    } catch (e: any) {
+      toast.error(e.message);
+      setEnvs([]);
+      setActiveEnvId("");
+    }
+  }
+  useEffect(() => { reloadEnvs(); }, [activeWS]);
+
   // Refresh history when its tab is opened or after each send
   useEffect(() => {
     if (sidebarTab !== "history") return;
-    api.pwHistory().then(setHistory).catch(() => setHistory([]));
-  }, [sidebarTab, response]);
+    api.pwHistory({ q: historyQuery, env_tag: historyEnvTag || undefined }).then(setHistory).catch(() => setHistory([]));
+  }, [sidebarTab, response, historyQuery, historyEnvTag]);
+
+  useEffect(() => {
+    if (!activeWS) return;
+    const q = search.trim();
+    if (!q) {
+      setSearchResults(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      api.pwSearch(activeWS, q).then(setSearchResults).catch(() => setSearchResults([]));
+    }, 180);
+    return () => clearTimeout(t);
+  }, [activeWS, search]);
 
   // Duplicate a request: copy fields, change name, drop into same folder.
   async function duplicateRequest(r: Request) {
@@ -237,6 +381,30 @@ export default function PostWomen() {
     toast.success("Collection created");
     reload();
   }
+  async function renameWorkspace() {
+    const current = workspaces.find((w) => w.id === activeWS);
+    const name = prompt("Workspace name:", current?.name || "");
+    if (!name?.trim()) return;
+    await api.pwRenameWorkspace(activeWS, name.trim());
+    setWorkspaces((prev) => prev.map((w) => w.id === activeWS ? { ...w, name: name.trim() } : w));
+    toast.success("Workspace renamed");
+  }
+  async function renameCollection(id: string, currentName: string) {
+    const name = prompt("Collection name:", currentName);
+    if (!name?.trim() || name.trim() === currentName) return;
+    await api.pwRenameCollection(id, name.trim());
+    toast.success("Collection renamed");
+    reload();
+  }
+  async function renameRequest(request: Request) {
+    const name = prompt("Request name:", request.name);
+    if (!name?.trim() || name.trim() === request.name) return;
+    const next = { ...request, name: name.trim() };
+    await api.pwUpdateRequest(request.id, next);
+    if (activeReq?.id === request.id) setActiveReq(next);
+    toast.success("Request renamed");
+    reload();
+  }
   async function newRequest(collectionID?: string | null) {
     // Requests without a collection don't surface in the tree (sidebar shows
     // collection > requests). If the user has no collection yet, auto-create
@@ -272,6 +440,61 @@ export default function PostWomen() {
     if (fresh) openTab(fresh);
   }
 
+  async function ensureCollectionID(collectionID?: string | null) {
+    if (collectionID) return collectionID;
+    const existing = collections.find((c) => !c.parent_id);
+    if (existing) return existing.id;
+    const created = await api.pwCreateCollection({
+      workspace_id: activeWS, name: "Drafts", is_folder: false,
+    });
+    return created.id;
+  }
+  async function createEnvironment() {
+    const payload = promptForEnvSeed();
+    if (!payload) return;
+    await api.pwCreateEnvironment(activeWS, payload);
+    toast.success("Environment created");
+    reloadEnvs();
+    setSidebarTab("environments");
+  }
+  async function editEnvironment(env: PWEnvironment) {
+    const payload = promptForEnvSeed(env);
+    if (!payload) return;
+    await api.pwUpdateEnvironment(env.id, payload);
+    toast.success("Environment updated");
+    reloadEnvs();
+  }
+  async function deleteEnvironment(id: string) {
+    if (!confirm("Delete this environment?")) return;
+    await api.pwDeleteEnvironment(id);
+    toast.success("Environment deleted");
+    reloadEnvs();
+  }
+
+  async function deleteWorkspace(id: string) {
+    if (!id) return;
+    const doomed = workspaces.find((w) => w.id === id);
+    if (!doomed) return;
+    if (!confirm(`Delete workspace "${doomed.name}" and everything inside it?`)) return;
+    await api.pwDeleteWorkspace(id);
+    const nextWorkspaces = workspaces.filter((w) => w.id !== id);
+    setWorkspaces(nextWorkspaces);
+    setOpenTabs([]);
+    setActiveTabId(null);
+    setCollections([]);
+    setRequests([]);
+    setHistory([]);
+    if (nextWorkspaces.length > 0) {
+      setActiveWS(nextWorkspaces[0].id);
+      toast.success("Workspace deleted");
+      return;
+    }
+    const { id: freshID } = await api.pwCreateWorkspace("My Workspace");
+    setWorkspaces([{ id: freshID, name: "My Workspace" }]);
+    setActiveWS(freshID);
+    toast.success("Workspace reset");
+  }
+
   // Open a request as a tab (or focus an already-open one).
   function openRequest(r: Request) {
     openTab(r);
@@ -285,6 +508,23 @@ export default function PostWomen() {
     if (!activeReq) return;
     setSaving(true);
     try {
+      if (isScratchRequest(activeReq)) {
+        const collectionID = await ensureCollectionID(activeReq.collection_id);
+        const { id } = await api.pwCreateRequest({
+          ...activeReq,
+          id: undefined,
+          collection_id: collectionID,
+        });
+        await reload();
+        const tree = await api.pwTree(activeWS);
+        const fresh = tree.requests.find((r: Request) => r.id === id);
+        if (fresh) {
+          closeTab(activeReq.id);
+          openTab(fresh);
+        }
+        if (!silent) toast.success("Saved as new request");
+        return;
+      }
       await api.pwUpdateRequest(activeReq.id, activeReq);
       setSavedReq(activeReq);
       if (!silent) toast.success("Saved");
@@ -295,10 +535,11 @@ export default function PostWomen() {
       setSaving(false);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeReq]);
+  }, [activeReq, activeWS, collections]);
 
   // Auto-save 1.2s after the last edit while dirty
   useEffect(() => {
+    if (isScratchRequest(activeReq)) return;
     if (!isDirty || !activeReq) return;
     const t = setTimeout(() => { void saveActive(true); }, 1200);
     return () => clearTimeout(t);
@@ -324,7 +565,8 @@ export default function PostWomen() {
     setSending(true);
     setResponse(null);
     try {
-      const r = await api.pwSend(activeReq);
+      const payload = isScratchRequest(activeReq) ? { ...activeReq, id: "" } : activeReq;
+      const r = await api.pwSend(payload, activeVars, { envTag });
       setResponse(r);
       if (r.error) toast.error(r.error); else toast.success(`${r.status} · ${r.duration_ms} ms`);
     } catch (e: any) {
@@ -412,6 +654,54 @@ export default function PostWomen() {
     nav(`/builder?prefill=${cfg}`);
   }
 
+  function openHistoryItem(h: HistoryItem) {
+    if (h.request) {
+      const req = cloneRequest(h.request);
+      if (!req.id || req.id.startsWith("history-")) {
+        const scratch = makeScratchRequest({
+          ...req,
+          id: undefined,
+          name: req.name || `${h.method} from history`,
+        });
+        openTab(scratch);
+        setResponseForTab(scratch.id, h.response || null);
+        toast.success("Opened history request as a scratch tab");
+      } else {
+        openTab(req, { preserveDirty: true });
+        setResponse(h.response || null);
+        toast.success("Opened full request from history");
+      }
+      return;
+    }
+    if (activeReq) {
+      setActiveReq({ ...activeReq, method: h.method, url: h.url });
+      toast.success("URL/method loaded into current tab");
+      return;
+    }
+    const scratch = makeScratchRequest({
+      name: `${h.method} from history`,
+      method: h.method,
+      url: h.url,
+    });
+    openTab(scratch);
+    setResponseForTab(scratch.id, h.response || null);
+    toast.success("Loaded from history as a scratch tab");
+  }
+
+  function openRunnerRequestInEditor(req: Request) {
+    openTab(req, { preserveDirty: true });
+    setMainView("request");
+  }
+
+  function openScratchFromRunner(req: Partial<Request>) {
+    const scratch = makeScratchRequest({
+      ...req,
+      name: req.name || "Runner preview",
+    });
+    openTab(scratch);
+    setMainView("request");
+  }
+
   // ── Render ───────────────────────────────────────────────────────
   return (
     <div className="h-screen flex flex-col bg-bg overflow-hidden">
@@ -456,12 +746,61 @@ export default function PostWomen() {
                 setActiveWS(e.target.value);
                 setOpenTabs([]);
                 setActiveTabId(null);
+                setCollections([]);
+                setRequests([]);
+                setHistory([]);
+                setEnvs([]);
+                setActiveEnvId("");
+                setMainView("request");
               }}
               className="input text-xs py-1 pr-7 max-w-[200px]"
               title="Workspace"
             >
               {workspaces.map((w: any) => <option key={w.id} value={w.id}>{w.name}</option>)}
               <option value="__new__">+ New workspace…</option>
+            </select>
+            <button
+              onClick={() => reload()}
+              className="btn-ghost text-xs"
+              title="Refresh workspace tree"
+            >
+              <RefreshCw className="w-3.5 h-3.5" /> Refresh
+            </button>
+            <button
+              onClick={renameWorkspace}
+              disabled={!activeWS}
+              className="btn-ghost text-xs disabled:opacity-40"
+              title="Rename current workspace"
+            >
+              <Save className="w-3.5 h-3.5" /> Rename
+            </button>
+            <button
+              onClick={() => deleteWorkspace(activeWS)}
+              disabled={!activeWS}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs
+                         text-ink-muted ring-1 ring-bg-border bg-bg-card/40
+                         hover:text-bad hover:ring-bad/40 hover:bg-bad/[.06] transition disabled:opacity-40"
+              title="Delete current workspace"
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Delete
+            </button>
+            <select
+              value={activeEnvId}
+              onChange={(e) => setActiveEnvId(e.target.value)}
+              className="input text-xs py-1 pr-7 max-w-[180px]"
+              title="Variables environment"
+            >
+              <option value="">No env</option>
+              {envs.map((env) => <option key={env.id} value={env.id}>{env.name}</option>)}
+            </select>
+            <select
+              value={envTag}
+              onChange={(e) => setEnvTag(e.target.value as EnvTag)}
+              className="input text-xs py-1 pr-7 max-w-[140px]"
+              title="Environment tag"
+            >
+              <option value="">No tag</option>
+              {ENV_TAGS.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
             </select>
           </>
         )}
@@ -509,7 +848,7 @@ export default function PostWomen() {
         {/* ── Left sidebar: collections / history ─────────────────── */}
         <aside className="w-72 shrink-0 border-r border-bg-border bg-bg-panel/40 flex flex-col min-h-0">
           <div className="flex border-b border-bg-border">
-            {(["collections", "history"] as const).map((t) => (
+            {(["collections", "history", "environments"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setSidebarTab(t)}
@@ -543,21 +882,34 @@ export default function PostWomen() {
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-2">
-                <Tree
-                  parentID="root"
-                  byParent={tree.byParent}
-                  reqByColl={tree.reqByColl}
-                  activeReqID={activeReq?.id}
-                  openFolders={openFolders}
-                  search={search.toLowerCase()}
-                  onToggle={toggleFolder}
-                  onPick={openRequest}
-                  onAddRequest={newRequest}
-                  onDeleteRequest={deleteRequest}
-                  onDeleteCollection={deleteCollection}
-                  onDuplicate={duplicateRequest}
-                  onExport={exportRoot}
-                />
+                {searchResults ? (
+                  <SearchResults
+                    items={searchResults}
+                    activeReqID={activeReq?.id}
+                    onPick={openRequest}
+                    onRename={renameRequest}
+                    onDuplicate={duplicateRequest}
+                    onDelete={deleteRequest}
+                  />
+                ) : (
+                  <Tree
+                    parentID="root"
+                    byParent={tree.byParent}
+                    reqByColl={tree.reqByColl}
+                    activeReqID={activeReq?.id}
+                    openFolders={openFolders}
+                    search={search.toLowerCase()}
+                    onToggle={toggleFolder}
+                    onPick={openRequest}
+                    onAddRequest={newRequest}
+                    onDeleteRequest={deleteRequest}
+                    onDeleteCollection={deleteCollection}
+                    onRenameCollection={renameCollection}
+                    onRenameRequest={renameRequest}
+                    onDuplicate={duplicateRequest}
+                    onExport={exportRoot}
+                  />
+                )}
                 {collections.length === 0 && (
                   <div className="text-center text-ink-muted text-xs py-8 px-4">
                     <PWLogo size={48} />
@@ -570,26 +922,25 @@ export default function PostWomen() {
               </div>
             </>
           ) : (
+            sidebarTab === "history" ? (
             <HistoryList
               items={history}
-              onLoad={(h: any) => {
-                if (activeReq) {
-                  setActiveReq({ ...activeReq, method: h.method, url: h.url });
-                  toast.success("URL/method loaded into current tab");
-                } else {
-                  const ephemeral: Request = {
-                    id: "history-" + Date.now(),
-                    collection_id: null,
-                    name: `${h.method} from history`,
-                    method: h.method, url: h.url,
-                    headers: {}, query: [], body_kind: "none", body: {}, auth: { kind: "none" },
-                    position: 0,
-                  };
-                  openTab(ephemeral);
-                  toast.success("Loaded from history (unsaved)");
-                }
-              }}
+              query={historyQuery}
+              envTag={historyEnvTag}
+              onQueryChange={setHistoryQuery}
+              onEnvTagChange={setHistoryEnvTag}
+              onLoad={openHistoryItem}
             />
+            ) : (
+              <EnvironmentList
+                items={envs}
+                activeEnvId={activeEnvId}
+                onPick={setActiveEnvId}
+                onCreate={createEnvironment}
+                onEdit={editEnvironment}
+                onDelete={deleteEnvironment}
+              />
+            )
           )}
         </aside>
 
@@ -599,6 +950,11 @@ export default function PostWomen() {
             <Runner
               requests={requests}
               initialReq={activeReq}
+              activeReq={activeReq}
+              baseVars={activeVars}
+              envTag={envTag}
+              onOpenRequest={openRunnerRequestInEditor}
+              onCreateScratchRequest={openScratchFromRunner}
               onExit={() => setMainView("request")}
             />
           ) : (
@@ -620,6 +976,10 @@ export default function PostWomen() {
               ) : (
                 <RequestPane
                   req={activeReq}
+                  scratch={isScratchRequest(activeReq)}
+                  collections={collections}
+                  activeEnv={activeEnv}
+                  envTag={envTag}
                   setReq={setActiveReq}
                   response={response}
                   sending={sending}
@@ -642,7 +1002,7 @@ export default function PostWomen() {
 // ── Tree component ──────────────────────────────────────────────────────
 function Tree({
   parentID, byParent, reqByColl, activeReqID, openFolders, search,
-  onToggle, onPick, onAddRequest, onDeleteRequest, onDeleteCollection, onDuplicate, onExport,
+  onToggle, onPick, onAddRequest, onDeleteRequest, onDeleteCollection, onRenameCollection, onRenameRequest, onDuplicate, onExport,
 }: any) {
   const cols = (byParent[parentID] || []) as Collection[];
   const reqs = (reqByColl[parentID] || []) as Request[];
@@ -661,6 +1021,9 @@ function Tree({
               <div className="opacity-0 group-hover:opacity-100 flex gap-0.5 transition">
                 <button title="Add request" onClick={() => onAddRequest(c.id)} className="text-ink-muted hover:text-brand p-0.5">
                   <Plus className="w-3.5 h-3.5" />
+                </button>
+                <button title="Rename collection" onClick={() => onRenameCollection(c.id, c.name)} className="text-ink-muted hover:text-brand p-0.5">
+                  <Save className="w-3 h-3" />
                 </button>
                 <button title="Export collection" onClick={() => onExport(c.id)} className="text-ink-muted hover:text-brand p-0.5">
                   <Download className="w-3 h-3" />
@@ -683,6 +1046,8 @@ function Tree({
                 onAddRequest={onAddRequest}
                 onDeleteRequest={onDeleteRequest}
                 onDeleteCollection={onDeleteCollection}
+                onRenameCollection={onRenameCollection}
+                onRenameRequest={onRenameRequest}
                 onDuplicate={onDuplicate}
                 onExport={onExport}
               />
@@ -709,6 +1074,13 @@ function Tree({
               {r.name}
             </span>
             <button
+              onClick={(e) => { e.stopPropagation(); onRenameRequest?.(r); }}
+              title="Rename"
+              className="opacity-0 group-hover:opacity-100 text-ink-muted hover:text-brand p-0.5 transition"
+            >
+              <Save className="w-3 h-3" />
+            </button>
+            <button
               onClick={(e) => { e.stopPropagation(); onDuplicate?.(r); }}
               title="Duplicate"
               className="opacity-0 group-hover:opacity-100 text-ink-muted hover:text-brand p-0.5 transition"
@@ -724,6 +1096,99 @@ function Tree({
             </button>
           </div>
         ))}
+    </div>
+  );
+}
+
+function SearchResults({
+  items, activeReqID, onPick, onRename, onDuplicate, onDelete,
+}: {
+  items: Request[];
+  activeReqID?: string | null;
+  onPick: (r: Request) => void;
+  onRename: (r: Request) => void;
+  onDuplicate: (r: Request) => void;
+  onDelete: (id: string) => void;
+}) {
+  if (items.length === 0) {
+    return <div className="text-xs text-ink-muted px-2 py-6">No matching requests.</div>;
+  }
+  return (
+    <div className="space-y-1">
+      {items.map((r) => (
+        <div
+          key={r.id}
+          onClick={() => onPick(r)}
+          className={`group flex items-center gap-2 px-2 py-1.5 rounded-md cursor-pointer transition
+            ${activeReqID === r.id ? "bg-brand/10 ring-1 ring-brand/40 shadow-sm" : "hover:bg-white/5"}`}
+        >
+          <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded ring-1 w-12 text-center shrink-0
+            ${METHOD_BG[r.method] || "bg-bg-card ring-bg-border"} ${METHOD_TONE[r.method] || "text-ink"}`}>
+            {r.method}
+          </span>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs truncate">{r.name}</div>
+            <div className="text-[10px] text-ink-dim truncate font-mono">{r.url}</div>
+          </div>
+          <button onClick={(e) => { e.stopPropagation(); onRename(r); }} className="opacity-0 group-hover:opacity-100 text-ink-muted hover:text-brand p-0.5 transition" title="Rename">
+            <Save className="w-3 h-3" />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onDuplicate(r); }} className="opacity-0 group-hover:opacity-100 text-ink-muted hover:text-brand p-0.5 transition" title="Duplicate">
+            <Copy className="w-3 h-3" />
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); onDelete(r.id); }} className="opacity-0 group-hover:opacity-100 text-ink-muted hover:text-bad p-0.5 transition" title="Delete">
+            <Trash2 className="w-3 h-3" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EnvironmentList({
+  items, activeEnvId, onPick, onCreate, onEdit, onDelete,
+}: {
+  items: PWEnvironment[];
+  activeEnvId: string;
+  onPick: (id: string) => void;
+  onCreate: () => void;
+  onEdit: (env: PWEnvironment) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <div className="flex-1 overflow-y-auto p-2 space-y-2">
+      <div className="flex gap-2">
+        <button onClick={onCreate} className="btn-primary text-xs flex-1">
+          <Plus className="w-3.5 h-3.5" /> New environment
+        </button>
+      </div>
+      {items.length === 0 && (
+        <div className="text-xs text-ink-muted px-2 py-6">No environments yet. Add one with variables like `base_url`, `token`, or `user_id`.</div>
+      )}
+      {items.map((env) => (
+        <div
+          key={env.id}
+          onClick={() => onPick(env.id)}
+          className={`group rounded-lg p-2 ring-1 cursor-pointer transition
+            ${activeEnvId === env.id ? "ring-sky-500/40 bg-sky-500/10" : "ring-bg-border bg-bg-card/40 hover:bg-white/5"}`}
+        >
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold flex-1 truncate">{env.name}</div>
+            <button onClick={(e) => { e.stopPropagation(); onEdit(env); }} className="opacity-0 group-hover:opacity-100 text-ink-muted hover:text-brand p-0.5 transition" title="Edit">
+              <Save className="w-3 h-3" />
+            </button>
+            <button onClick={(e) => { e.stopPropagation(); onDelete(env.id); }} className="opacity-0 group-hover:opacity-100 text-ink-muted hover:text-bad p-0.5 transition" title="Delete">
+              <Trash2 className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="mt-1 text-[10px] text-ink-dim font-mono">
+            {Object.keys(env.values || {}).length} vars
+          </div>
+          <div className="mt-1 text-[10px] text-ink-muted truncate font-mono">
+            {Object.entries(env.values || {}).slice(0, 3).map(([k, v]) => `${k}=${v}`).join(" · ")}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -782,7 +1247,7 @@ function Hint({ kbd, label }: { kbd: string; label: string }) {
 }
 
 // ── Request + Response panes ────────────────────────────────────────────
-function RequestPane({ req, setReq, response, sending, saving, dirty, onSend, onSave, onLoadTest, onApplyCurl }: any) {
+function RequestPane({ req, scratch, collections, activeEnv, envTag, setReq, response, sending, saving, dirty, onSend, onSave, onLoadTest, onApplyCurl }: any) {
   const [tab, setTab] = useState<"params" | "headers" | "body" | "auth">("body");
   const [respTab, setRespTab] = useState<"body" | "headers" | "cookies">("body");
 
@@ -795,6 +1260,12 @@ function RequestPane({ req, setReq, response, sending, saving, dirty, onSend, on
     if (!req.url) return toast.error("URL is empty.");
     navigator.clipboard.writeText(generateCurl(req));
     toast.success("Copied as curl");
+  }
+
+  function copyURL() {
+    if (!req.url) return toast.error("URL is empty.");
+    navigator.clipboard.writeText(req.url);
+    toast.success("Copied URL");
   }
 
   return (
@@ -854,6 +1325,32 @@ function RequestPane({ req, setReq, response, sending, saving, dirty, onSend, on
           className="bg-transparent outline-none text-sm font-semibold flex-1 min-w-0"
           placeholder="Request name"
         />
+        <select
+          value={req.collection_id || ""}
+          onChange={(e) => patch({ collection_id: e.target.value || null })}
+          className="input text-xs py-1 max-w-[180px]"
+          title="Collection"
+        >
+          <option value="">No collection</option>
+          {collections.filter((c: Collection) => !c.is_folder).map((c: Collection) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </select>
+        {activeEnv && (
+          <span className="text-[10px] uppercase tracking-wider font-mono px-2 py-1 rounded-full bg-sky-500/10 text-sky-300 ring-1 ring-sky-500/30 shrink-0">
+            {activeEnv.name}
+          </span>
+        )}
+        {envTag && (
+          <span className="text-[10px] uppercase tracking-wider font-mono px-2 py-1 rounded-full bg-cool/10 text-cool ring-1 ring-cool/30 shrink-0">
+            {envTag}
+          </span>
+        )}
+        {scratch && (
+          <span className="text-[10px] uppercase tracking-wider font-mono px-2 py-1 rounded-full bg-sky-500/10 text-sky-300 ring-1 ring-sky-500/30 shrink-0">
+            scratch
+          </span>
+        )}
         {/* Save / dirty indicator */}
         <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider font-mono shrink-0">
           {saving
@@ -863,7 +1360,10 @@ function RequestPane({ req, setReq, response, sending, saving, dirty, onSend, on
               : <span className="text-good flex items-center gap-1"><Check className="w-3 h-3" />saved</span>}
         </div>
         <button onClick={onSave} className="btn-ghost text-xs" title="Save (⌘/Ctrl+S)">
-          <Save className="w-3.5 h-3.5" />Save
+          <Save className="w-3.5 h-3.5" />{scratch ? "Save as new" : "Save"}
+        </button>
+        <button onClick={copyURL} className="btn-ghost text-xs" title="Copy URL">
+          <Copy className="w-3.5 h-3.5" />URL
         </button>
         <button onClick={copyAsCurl} className="btn-ghost text-xs" title="Copy as curl">
           <Terminal className="w-3.5 h-3.5" />curl
@@ -1129,6 +1629,7 @@ function AuthEditor({ value, onChange }: any) {
 
 // ── Response viewer ─────────────────────────────────────────────────────
 function ResponseTabs({ response, sending, tab, setTab }: any) {
+  const [search, setSearch] = useState("");
   if (sending) {
     return <div className="flex-1 grid place-items-center text-ink-muted text-sm">
       <div className="flex items-center gap-2"><RefreshCw className="w-4 h-4 animate-spin" /> Sending…</div>
@@ -1169,15 +1670,33 @@ function ResponseTabs({ response, sending, tab, setTab }: any) {
             </button>
           ))}
         </div>
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search response…"
+          className="input text-xs py-1 w-40"
+        />
+        <button onClick={() => copy(Object.entries(response.headers || {}).map(([k, vs]: any) => `${k}: ${Array.isArray(vs) ? vs.join(", ") : String(vs)}`).join("\n"))} className="text-ink-muted hover:text-brand p-1" title="Copy headers">
+          <Copy className="w-3.5 h-3.5" />
+        </button>
+        <button onClick={() => downloadText(`response-${status || "err"}.txt`, prettyMaybe(response.body || ""))} className="text-ink-muted hover:text-brand p-1" title="Download body">
+          <Download className="w-3.5 h-3.5" />
+        </button>
         <button onClick={() => copy(prettyMaybe(response.body || ""))} className="text-ink-muted hover:text-brand p-1" title="Copy body">
           <Copy className="w-3.5 h-3.5" />
         </button>
       </div>
       <div className="flex-1 overflow-y-auto p-3 font-mono text-xs">
-        {tab === "body" && <BodyView body={response.body} truncated={response.body_truncated} />}
+        {tab === "body" && <BodyView body={response.body} truncated={response.body_truncated} search={search} />}
         {tab === "headers" && (
           <div className="space-y-0.5">
-            {Object.entries(response.headers || {}).map(([k, vs]: any) => (
+            {Object.entries(response.headers || {})
+              .filter(([k, vs]: any) => {
+                if (!search.trim()) return true;
+                const hay = `${k} ${Array.isArray(vs) ? vs.join(", ") : String(vs)}`.toLowerCase();
+                return hay.includes(search.toLowerCase());
+              })
+              .map(([k, vs]: any) => (
               <div key={k} className="grid grid-cols-[200px_1fr] gap-2 py-1 border-b border-bg-border">
                 <span className="text-brand">{k}</span>
                 <span className="text-ink break-all">{Array.isArray(vs) ? vs.join(", ") : String(vs)}</span>
@@ -1188,7 +1707,9 @@ function ResponseTabs({ response, sending, tab, setTab }: any) {
         {tab === "cookies" && (
           (response.cookies || []).length === 0
             ? <div className="text-ink-muted">No cookies set.</div>
-            : <div className="space-y-1">{(response.cookies || []).map((c: string, i: number) => (
+            : <div className="space-y-1">{(response.cookies || [])
+                .filter((c: string) => !search.trim() || c.toLowerCase().includes(search.toLowerCase()))
+                .map((c: string, i: number) => (
                 <div key={i} className="text-ink break-all">{c}</div>
               ))}</div>
         )}
@@ -1197,11 +1718,14 @@ function ResponseTabs({ response, sending, tab, setTab }: any) {
   );
 }
 
-function BodyView({ body, truncated }: { body: string; truncated?: boolean }) {
+function BodyView({ body, truncated, search }: { body: string; truncated?: boolean; search?: string }) {
   const pretty = prettyMaybe(body || "");
+  const visible = !search?.trim()
+    ? pretty
+    : pretty.split("\n").filter((line) => line.toLowerCase().includes(search.toLowerCase())).join("\n");
   return (
     <>
-      <pre className="whitespace-pre-wrap break-all text-ink-muted">{pretty}</pre>
+      <pre className="whitespace-pre-wrap break-all text-ink-muted">{visible || pretty}</pre>
       {truncated && (
         <div className="text-warn text-[10px] mt-2 uppercase tracking-wider">
           ⚠ Body truncated at 2 MB
@@ -1209,6 +1733,16 @@ function BodyView({ body, truncated }: { body: string; truncated?: boolean }) {
       )}
     </>
   );
+}
+
+function downloadText(filename: string, content: string) {
+  const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
 
 function prettyMaybe(s: string): string {
@@ -1300,19 +1834,45 @@ function TabBar({
 }
 
 // ── History list ────────────────────────────────────────────────────────
-function HistoryList({ items, onLoad }: { items: any[]; onLoad: (h: any) => void }) {
+function HistoryList({
+  items, query, envTag, onQueryChange, onEnvTagChange, onLoad,
+}: {
+  items: HistoryItem[];
+  query: string;
+  envTag: EnvTag;
+  onQueryChange: (v: string) => void;
+  onEnvTagChange: (v: EnvTag) => void;
+  onLoad: (h: HistoryItem) => void;
+}) {
   if (items.length === 0) {
     return (
-      <div className="flex-1 grid place-items-center text-center px-6 text-xs text-ink-muted">
-        <div>
-          <Search className="w-7 h-7 mx-auto mb-2 opacity-40" />
-          No requests sent yet.<br />Hit Send and history will fill up here.
+      <div className="flex-1 flex flex-col min-h-0">
+        <div className="p-2 border-b border-bg-border flex gap-2">
+          <input className="input text-xs flex-1" placeholder="Search history…" value={query} onChange={(e) => onQueryChange(e.target.value)} />
+          <select className="input text-xs" value={envTag} onChange={(e) => onEnvTagChange(e.target.value as EnvTag)}>
+            <option value="">All tags</option>
+            {ENV_TAGS.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+          </select>
+        </div>
+        <div className="flex-1 grid place-items-center text-center px-6 text-xs text-ink-muted">
+          <div>
+            <Search className="w-7 h-7 mx-auto mb-2 opacity-40" />
+            No requests sent yet.<br />Hit Send and history will fill up here.
+          </div>
         </div>
       </div>
     );
   }
   return (
-    <div className="flex-1 overflow-y-auto p-2 space-y-1">
+    <div className="flex-1 flex flex-col min-h-0">
+      <div className="p-2 border-b border-bg-border flex gap-2">
+        <input className="input text-xs flex-1" placeholder="Search history…" value={query} onChange={(e) => onQueryChange(e.target.value)} />
+        <select className="input text-xs" value={envTag} onChange={(e) => onEnvTagChange(e.target.value as EnvTag)}>
+          <option value="">All tags</option>
+          {ENV_TAGS.map((tag) => <option key={tag} value={tag}>{tag}</option>)}
+        </select>
+      </div>
+      <div className="flex-1 overflow-y-auto p-2 space-y-1">
       {items.map((h, i) => {
         const tone = h.status >= 500 || h.status === 0 ? "text-bad"
           : h.status >= 400 ? "text-warn"
@@ -1333,10 +1893,15 @@ function HistoryList({ items, onLoad }: { items: any[]; onLoad: (h: any) => void
               <span className="text-[10px] text-ink-muted ml-auto">{h.duration_ms} ms</span>
             </div>
             <div className="text-xs text-ink mt-1 truncate font-mono">{h.url}</div>
-            <div className="text-[10px] text-ink-dim mt-0.5">{new Date(h.ran_at).toLocaleString()}</div>
+            <div className="mt-0.5 flex items-center gap-2">
+              <span className="text-[10px] text-ink-dim">{new Date(h.ran_at).toLocaleString()}</span>
+              {h.env_tag && <span className="text-[10px] text-cool">{h.env_tag}</span>}
+              <span className="text-[10px] text-sky-300">{h.request ? "full request available" : "URL only"}</span>
+            </div>
           </button>
         );
       })}
+      </div>
     </div>
   );
 }
