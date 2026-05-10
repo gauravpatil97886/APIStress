@@ -9,17 +9,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/choicetechlab/choicehammer/internal/platform/activity"
-	"github.com/choicetechlab/choicehammer/internal/platform/api/middleware"
-	"github.com/choicetechlab/choicehammer/internal/platform/curl"
-	"github.com/choicetechlab/choicehammer/internal/tools/apistress/engine"
-	"github.com/choicetechlab/choicehammer/internal/platform/jira"
-	"github.com/choicetechlab/choicehammer/internal/tools/kavach"
-	"github.com/choicetechlab/choicehammer/internal/platform/logger"
-	"github.com/choicetechlab/choicehammer/internal/platform/security"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"go.uber.org/zap"
+
+	"github.com/choicetechlab/choicehammer/internal/platform/activity"
+	"github.com/choicetechlab/choicehammer/internal/platform/api/middleware"
+	"github.com/choicetechlab/choicehammer/internal/platform/curl"
+	"github.com/choicetechlab/choicehammer/internal/platform/jira"
+	"github.com/choicetechlab/choicehammer/internal/platform/logger"
+	"github.com/choicetechlab/choicehammer/internal/platform/security"
+	"github.com/choicetechlab/choicehammer/internal/tools/apistress/engine"
+	"github.com/choicetechlab/choicehammer/internal/tools/kavach"
 )
 
 type KavachHandler struct {
@@ -34,17 +35,17 @@ type KavachHandler struct {
 }
 
 type startScanBody struct {
-	Curl            string             `json:"curl"`
+	Curl            string              `json:"curl"`
 	Request         *engine.HTTPRequest `json:"request"`
-	CreatedBy       string             `json:"created_by"`
-	JiraID          string             `json:"jira_id"`     // optional, like APIStress
-	JiraLink        string             `json:"jira_link"`   // optional, auto-fills from jira_id lookup
-	Notes           string             `json:"notes"`       // optional free-text
-	Categories      []string           `json:"categories"`
-	RateLimitRPS    int                `json:"rate_limit_rps"`
-	MaxDurationSec  int                `json:"max_duration_sec"`
-	SeverityThresh  string             `json:"severity_threshold"`
-	ConfirmHostname string             `json:"confirm_hostname"`
+	CreatedBy       string              `json:"created_by"`
+	JiraID          string              `json:"jira_id"`   // optional, like APIStress
+	JiraLink        string              `json:"jira_link"` // optional, auto-fills from jira_id lookup
+	Notes           string              `json:"notes"`     // optional free-text
+	Categories      []string            `json:"categories"`
+	RateLimitRPS    int                 `json:"rate_limit_rps"`
+	MaxDurationSec  int                 `json:"max_duration_sec"`
+	SeverityThresh  string              `json:"severity_threshold"`
+	ConfirmHostname string              `json:"confirm_hostname"`
 }
 
 // Start — POST /api/kavach/scans
@@ -278,7 +279,7 @@ func (h *KavachHandler) Get(c *gin.Context) {
 			"request": reqObj, "response": respObj, "evidence_text": ev,
 			"owasp": owasp, "cwe": cwe, "remediation": remed,
 			"test_explanation": testExp,
-			"ts": ts.Format(time.RFC3339),
+			"ts":               ts.Format(time.RFC3339),
 		})
 	}
 
@@ -393,9 +394,9 @@ func writeKavachEvent(w io.Writer, f http.Flusher, event string, data interface{
 type fileFindingBody struct {
 	ProjectKey string   `json:"project_key"`
 	IssueType  string   `json:"issue_type"`
-	Summary    string   `json:"summary"`     // optional override
-	Comment    string   `json:"comment"`     // optional body override
-	Priority   string   `json:"priority"`    // optional override
+	Summary    string   `json:"summary"`  // optional override
+	Comment    string   `json:"comment"`  // optional body override
+	Priority   string   `json:"priority"` // optional override
 	Labels     []string `json:"labels"`
 }
 
@@ -459,7 +460,7 @@ func (h *KavachHandler) FileFinding(c *gin.Context) {
 			PlainWhatsHappening: pwhat, PlainWhy: pwhy, PlainHowToFix: howSteps,
 			OWASP: owasp, CWE: cwe, Effort: effort,
 			Description: desc, Remediation: remed,
-			Evidence: ev,
+			Evidence:  ev,
 			TargetURL: targetURL, TargetHost: targetHost,
 		})
 	}
@@ -686,15 +687,20 @@ func BuildKavachFindingIssueBody(f KavachFindingForBody) string {
 	tone := "🛡️"
 	switch f.Severity {
 	case "critical":
-		panelColor = "#FFEBE6"; tone = "🚨 Fix this now"
+		panelColor = "#FFEBE6"
+		tone = "🚨 Fix this now"
 	case "high":
-		panelColor = "#FFFAE6"; tone = "⚠️ Fix this week"
+		panelColor = "#FFFAE6"
+		tone = "⚠️ Fix this week"
 	case "medium":
-		panelColor = "#FFFAE6"; tone = "🟡 Fix when you can"
+		panelColor = "#FFFAE6"
+		tone = "🟡 Fix when you can"
 	case "low":
-		panelColor = "#DEEBFF"; tone = "🔵 Nice to have"
+		panelColor = "#DEEBFF"
+		tone = "🔵 Nice to have"
 	case "info":
-		panelColor = "#F4F5F7"; tone = "ℹ️ Heads-up"
+		panelColor = "#F4F5F7"
+		tone = "ℹ️ Heads-up"
 	}
 	b.WriteString("{panel:bgColor=" + panelColor + "}*" + tone + "* — _" + strings.ToUpper(f.Severity) + "_{panel}\n\n")
 
@@ -893,9 +899,9 @@ func safeFilename(s string) string {
 func renderKavachPDFForScan(ctx context.Context, db *pgxpool.Pool, teamID, scanID string) ([]byte, error) {
 	var (
 		sid, url, host, status, createdBy string
-		startedAt                          time.Time
-		finishedAt                         *time.Time
-		summaryRaw                         []byte
+		startedAt                         time.Time
+		finishedAt                        *time.Time
+		summaryRaw                        []byte
 	)
 	if err := db.QueryRow(ctx, `
 		SELECT id, target_url, target_host, status, started_at, finished_at, summary, created_by
@@ -948,12 +954,24 @@ func renderKavachPDFForScan(ctx context.Context, db *pgxpool.Pool, teamID, scanI
 				continue
 			}
 			row := kavach.PDFTestRow{}
-			if v, ok := m["test_id"].(string); ok { row.TestID = v }
-			if v, ok := m["name"].(string); ok    { row.Name = v }
-			if v, ok := m["category"].(string); ok { row.Category = v }
-			if v, ok := m["passed"].(bool); ok    { row.Passed = v }
-			if v, ok := m["finding_count"].(float64); ok { row.FindingCount = int(v) }
-			if row.Name == "" { row.Name = row.TestID }
+			if v, ok := m["test_id"].(string); ok {
+				row.TestID = v
+			}
+			if v, ok := m["name"].(string); ok {
+				row.Name = v
+			}
+			if v, ok := m["category"].(string); ok {
+				row.Category = v
+			}
+			if v, ok := m["passed"].(bool); ok {
+				row.Passed = v
+			}
+			if v, ok := m["finding_count"].(float64); ok {
+				row.FindingCount = int(v)
+			}
+			if row.Name == "" {
+				row.Name = row.TestID
+			}
 			testRows = append(testRows, row)
 		}
 	}
